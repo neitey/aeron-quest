@@ -67,6 +67,10 @@ typedef struct AeronConfig {
 int Aeron_Init(const AeronConfig* config);
 /* Nonzero while an OpenXR session is presenting frames. */
 int Aeron_XrIsPresenting(void);
+/* Menus: the right VR controller points at the virtual screen as a mouse
+ * (trigger = left click, grip = right click). Disable during flight so the
+ * trigger fires instead. Enabled by default. */
+void Aeron_XrSetPointerEnabled(int enabled);
 /* Shuts down Aeron and releases all runtime-owned resources. */
 void Aeron_Shutdown(void);
 

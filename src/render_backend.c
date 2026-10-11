@@ -177,8 +177,6 @@ static int Aeron_LoadBuiltinShaders(void) {
 	return g_aeron.fullscreen_vertex_shader && g_aeron.fullscreen_fragment_shader;
 }
 
-static AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format);
-
 /* Applies the best available swapchain composition for the requested output
  * mode: HDR extended-linear when hdr is nonzero (no silent SDR fallback — the
  * caller keeps its previous mode on failure), otherwise SDR-linear with a
@@ -570,7 +568,7 @@ static SDL_GPUTextureFormat Aeron_ToSdlTextureFormat(AeronTextureFormat format) 
 }
 
 /* Reverse mapping for the formats a swapchain can take. */
-static AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format) {
+AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format) {
 	switch (format) {
 		case SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM:
 			return AERON_TEXTURE_FORMAT_RGBA8_UNORM;
@@ -1791,7 +1789,7 @@ int Aeron_Present(void) {
 	 * in place of a port-side per-tick re-submit. A visible debug overlay still
 	 * forces a present so its windows keep rendering over an idle frame.
 	 * An open XR frame is ended with the previous virtual-screen image. */
-	if (g_aeron.render_layer_count == 0 && !Aeron_DebugUiVisible()) {
+	if (g_aeron.render_layer_count == 0 && !Aeron_DebugUiVisible() && !Aeron_XrStereoCommitted()) {
 		if (xr_frame) {
 			Aeron_XrEndFrame(NULL);
 		}
@@ -1856,25 +1854,42 @@ int Aeron_Present(void) {
 		int             capture;
 
 		Aeron_XrScreenSize(&screen_w, &screen_h);
-		present_ok =
-			Aeron_ComposeLayers(command_buffer, Aeron_XrScreenTexture(), (Uint32)screen_w, (Uint32)screen_h,
-								Aeron_XrScreenFormat(), 1.0f, 0.0f, 0, "XR virtual screen");
-		if (present_ok) {
-			Aeron_XrCopyScreenToSwapchain(command_buffer);
+		if (Aeron_XrStereoCommitted()) {
+			/* Stereo frame: the game rendered both eyes (+HUD) itself. Copy
+			 * them into the XR swapchains; the desktop window keeps showing
+			 * the ordinary composed layers whenever an image is free. */
+			present_ok = 1;
 			if (SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &mirror, &mirror_w,
 											   &mirror_h) &&
 				mirror) {
-				SDL_GPUBlitInfo blit;
-				SDL_zero(blit);
-				blit.source.texture      = Aeron_XrScreenTexture();
-				blit.source.w            = (Uint32)screen_w;
-				blit.source.h            = (Uint32)screen_h;
-				blit.destination.texture = mirror;
-				blit.destination.w       = mirror_w;
-				blit.destination.h       = mirror_h;
-				blit.load_op             = SDL_GPU_LOADOP_CLEAR;
-				blit.filter              = SDL_GPU_FILTER_LINEAR;
-				SDL_BlitGPUTexture(command_buffer, &blit);
+				present_ok = Aeron_ComposeLayers(command_buffer, mirror, mirror_w, mirror_h,
+												 g_aeron.swapchain_format, Aeron_OutputSdrWhiteLevel(),
+												 Aeron_OutputSdrDecodeGamma(), 1, "Desktop mirror");
+			}
+			if (present_ok) {
+				Aeron_XrStereoCopyToSwapchains(command_buffer);
+			}
+		} else {
+			present_ok = Aeron_ComposeLayers(command_buffer, Aeron_XrScreenTexture(), (Uint32)screen_w,
+											 (Uint32)screen_h, Aeron_XrScreenFormat(), 1.0f, 0.0f, 0,
+											 "XR virtual screen");
+			if (present_ok) {
+				Aeron_XrCopyScreenToSwapchain(command_buffer);
+				if (SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &mirror, &mirror_w,
+												   &mirror_h) &&
+					mirror) {
+					SDL_GPUBlitInfo blit;
+					SDL_zero(blit);
+					blit.source.texture      = Aeron_XrScreenTexture();
+					blit.source.w            = (Uint32)screen_w;
+					blit.source.h            = (Uint32)screen_h;
+					blit.destination.texture = mirror;
+					blit.destination.w       = mirror_w;
+					blit.destination.h       = mirror_h;
+					blit.load_op             = SDL_GPU_LOADOP_CLEAR;
+					blit.filter              = SDL_GPU_FILTER_LINEAR;
+					SDL_BlitGPUTexture(command_buffer, &blit);
+				}
 			}
 		}
 		AeronGpuDebug_Pop(command_buffer);

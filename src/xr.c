@@ -94,75 +94,19 @@ double Aeron_XrDisplayRefreshRate(void) { return 0.0; }
 
 #else /* AERON_HAS_OPENXR */
 
-#include <SDL3/SDL_openxr.h>
+#include "xr_private.h"
 
-/* OpenXR structs are conventionally initialized as { XR_TYPE_..., NULL } with
- * the remaining fields zeroed; that idiom is intentional here. */
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-#endif
+AeronXr g_xr;
 
-#define AERON_XR_MAX_IMAGES 8
+/* Up to three captures per frame: the virtual screen, or (stereo) both eyes
+ * plus the HUD. Only 8-bit formats are written. */
+#define AERON_XR_CAPTURE_SLOTS 3
+static SDL_GPUTransferBuffer* g_capture_buffers[AERON_XR_CAPTURE_SLOTS];
+static const char*            g_capture_names[AERON_XR_CAPTURE_SLOTS];
+static int                    g_capture_sizes[AERON_XR_CAPTURE_SLOTS][2];
+static int                    g_capture_count;
 
-typedef struct AeronXr {
-	SDL_GPUDevice* device;
-	XrInstance     instance;
-	XrSystemId     system_id;
-	XrSession      session;
-	XrSpace        local_space;
-	XrSessionState state;
-	int            session_running;
-	int            exit_requested;
-
-	/* Virtual screen: intermediate composition target + XR swapchain. */
-	SDL_GPUTexture*      screen_texture;
-	SDL_GPUTextureFormat screen_format;
-	int                  screen_width;
-	int                  screen_height;
-	XrSwapchain          screen_swapchain;
-	SDL_GPUTexture**     screen_images;
-	int                  screen_has_released_image;
-	float                screen_distance_m;
-	float                screen_width_m;
-	float                screen_height_offset_m;
-
-	/* Current frame. */
-	int        frame_begun;
-	int        image_acquired;
-	XrTime     predicted_display_time;
-	XrDuration predicted_display_period;
-	XrBool32   should_render;
-	uint64_t   frame_index;
-
-	/* Optional headless capture (AERON_XR_CAPTURE="60,300" + _DIR). */
-	SDL_GPUTransferBuffer* capture_buffer;
-	int                    capture_pending;
-	uint64_t               capture_frames[16];
-	int                    capture_frame_count;
-	char                   capture_dir[512];
-
-	PFN_xrGetInstanceProcAddr   xrGetInstanceProcAddr;
-	PFN_xrPollEvent             xrPollEvent;
-	PFN_xrBeginSession          xrBeginSession;
-	PFN_xrEndSession            xrEndSession;
-	PFN_xrDestroySession        xrDestroySession;
-	PFN_xrDestroyInstance       xrDestroyInstance;
-	PFN_xrCreateReferenceSpace  xrCreateReferenceSpace;
-	PFN_xrDestroySpace          xrDestroySpace;
-	PFN_xrWaitFrame             xrWaitFrame;
-	PFN_xrBeginFrame            xrBeginFrame;
-	PFN_xrEndFrame              xrEndFrame;
-	PFN_xrAcquireSwapchainImage xrAcquireSwapchainImage;
-	PFN_xrWaitSwapchainImage    xrWaitSwapchainImage;
-	PFN_xrReleaseSwapchainImage xrReleaseSwapchainImage;
-	PFN_xrGetInstanceProperties xrGetInstanceProperties;
-	PFN_xrGetSystemProperties   xrGetSystemProperties;
-	PFN_xrResultToString        xrResultToString;
-} AeronXr;
-
-static AeronXr g_xr;
-
-static const char* Aeron_XrResultName(XrResult result) {
+const char* Aeron_XrResultName(XrResult result) {
 	static char buffer[XR_MAX_RESULT_STRING_SIZE];
 	if (g_xr.xrResultToString && g_xr.instance &&
 		XR_SUCCEEDED(g_xr.xrResultToString(g_xr.instance, result, buffer))) {
@@ -227,6 +171,23 @@ static int Aeron_XrLoadFunctions(void) {
 	AERON_XR_LOAD(xrGetInstanceProperties);
 	AERON_XR_LOAD(xrGetSystemProperties);
 	AERON_XR_LOAD(xrResultToString);
+	AERON_XR_LOAD(xrStringToPath);
+	AERON_XR_LOAD(xrCreateActionSet);
+	AERON_XR_LOAD(xrDestroyActionSet);
+	AERON_XR_LOAD(xrCreateAction);
+	AERON_XR_LOAD(xrSuggestInteractionProfileBindings);
+	AERON_XR_LOAD(xrAttachSessionActionSets);
+	AERON_XR_LOAD(xrSyncActions);
+	AERON_XR_LOAD(xrGetActionStateFloat);
+	AERON_XR_LOAD(xrGetActionStateBoolean);
+	AERON_XR_LOAD(xrGetActionStateVector2f);
+	AERON_XR_LOAD(xrGetActionStatePose);
+	AERON_XR_LOAD(xrCreateActionSpace);
+	AERON_XR_LOAD(xrLocateSpace);
+	AERON_XR_LOAD(xrApplyHapticFeedback);
+	AERON_XR_LOAD(xrStopHapticFeedback);
+	AERON_XR_LOAD(xrEnumerateViewConfigurationViews);
+	AERON_XR_LOAD(xrLocateViews);
 #undef AERON_XR_LOAD
 	return 1;
 }
@@ -391,6 +352,10 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 		}
 	}
 
+	Aeron_XrStereoInit();
+	if (!Aeron_XrInputInit()) {
+		Aeron_LogWarn("aeron.xr", "controller input unavailable; keyboard/mouse/joystick still work");
+	}
 	Aeron_XrParseCapture();
 	g_xr.state = XR_SESSION_STATE_UNKNOWN;
 	Aeron_LogInfo("aeron.xr", "virtual screen %dx%d format %d at %.2f m, %.2f m wide", g_xr.screen_width,
@@ -399,9 +364,14 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 }
 
 void Aeron_XrShutdown(void) {
+	Aeron_XrInputShutdown();
+	Aeron_XrStereoShutdown();
 	if (g_xr.device) {
-		if (g_xr.capture_buffer) {
-			SDL_ReleaseGPUTransferBuffer(g_xr.device, g_xr.capture_buffer);
+		for (int i = 0; i < AERON_XR_CAPTURE_SLOTS; ++i) {
+			if (g_capture_buffers[i]) {
+				SDL_ReleaseGPUTransferBuffer(g_xr.device, g_capture_buffers[i]);
+				g_capture_buffers[i] = NULL;
+			}
 		}
 		if (g_xr.screen_texture) {
 			SDL_ReleaseGPUTexture(g_xr.device, g_xr.screen_texture);
@@ -558,79 +528,118 @@ static int Aeron_XrCaptureDue(void) {
 	return 0;
 }
 
-int Aeron_XrRecordCapture(SDL_GPUCommandBuffer* command_buffer) {
+static int Aeron_XrCaptureTexture(SDL_GPUCopyPass* copy_pass, SDL_GPUTexture* texture, int width, int height,
+								  const char* name) {
 	SDL_GPUTextureRegion       region;
 	SDL_GPUTextureTransferInfo transfer;
-	SDL_GPUCopyPass*           copy_pass;
-	const Uint32               size = (Uint32)g_xr.screen_width * (Uint32)g_xr.screen_height * 4u;
+	const int                  slot = g_capture_count;
+	const Uint32               size = (Uint32)width * (Uint32)height * 4u;
 
-	if (!command_buffer || !g_xr.screen_texture || !Aeron_XrCaptureDue() ||
-		g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT) {
+	if (!texture || slot >= AERON_XR_CAPTURE_SLOTS || width <= 0 || height <= 0) {
 		return 0;
 	}
-	if (!g_xr.capture_buffer) {
+	if (g_capture_buffers[slot] &&
+		(g_capture_sizes[slot][0] != width || g_capture_sizes[slot][1] != height)) {
+		SDL_ReleaseGPUTransferBuffer(g_xr.device, g_capture_buffers[slot]);
+		g_capture_buffers[slot] = NULL;
+	}
+	if (!g_capture_buffers[slot]) {
 		SDL_GPUTransferBufferCreateInfo info;
 		SDL_zero(info);
-		info.usage          = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
-		info.size           = size;
-		g_xr.capture_buffer = SDL_CreateGPUTransferBuffer(g_xr.device, &info);
-		if (!g_xr.capture_buffer) {
+		info.usage              = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+		info.size               = size;
+		g_capture_buffers[slot] = SDL_CreateGPUTransferBuffer(g_xr.device, &info);
+		if (!g_capture_buffers[slot]) {
 			return 0;
 		}
+	}
+	SDL_zero(region);
+	region.texture = texture;
+	region.w       = (Uint32)width;
+	region.h       = (Uint32)height;
+	region.d       = 1;
+	SDL_zero(transfer);
+	transfer.transfer_buffer = g_capture_buffers[slot];
+	SDL_DownloadFromGPUTexture(copy_pass, &region, &transfer);
+	g_capture_sizes[slot][0] = width;
+	g_capture_sizes[slot][1] = height;
+	g_capture_names[slot]    = name;
+	g_capture_count++;
+	return 1;
+}
+
+int Aeron_XrRecordCapture(SDL_GPUCommandBuffer* command_buffer) {
+	SDL_GPUCopyPass* copy_pass;
+
+	g_capture_count = 0;
+	if (!command_buffer || !Aeron_XrCaptureDue() ||
+		g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT) {
+		return 0;
 	}
 	copy_pass = SDL_BeginGPUCopyPass(command_buffer);
 	if (!copy_pass) {
 		return 0;
 	}
-	SDL_zero(region);
-	region.texture = g_xr.screen_texture;
-	region.w       = (Uint32)g_xr.screen_width;
-	region.h       = (Uint32)g_xr.screen_height;
-	region.d       = 1;
-	SDL_zero(transfer);
-	transfer.transfer_buffer = g_xr.capture_buffer;
-	SDL_DownloadFromGPUTexture(copy_pass, &region, &transfer);
+	if (Aeron_XrStereoCommitted()) {
+		int w = 0;
+		int h = 0;
+		Aeron_XrStereoSize(&w, &h);
+		Aeron_XrCaptureTexture(copy_pass, Aeron_XrStereoTexture(0), w, h, "eye_left");
+		Aeron_XrCaptureTexture(copy_pass, Aeron_XrStereoTexture(1), w, h, "eye_right");
+		if (Aeron_XrStereoHudVisible()) {
+			Aeron_XrCaptureTexture(copy_pass, Aeron_XrStereoTexture(2), w, h, "hud");
+		}
+	} else {
+		Aeron_XrCaptureTexture(copy_pass, g_xr.screen_texture, g_xr.screen_width, g_xr.screen_height,
+							   "screen");
+	}
 	SDL_EndGPUCopyPass(copy_pass);
-	g_xr.capture_pending = 1;
-	return 1;
+	g_xr.capture_pending = g_capture_count > 0;
+	return g_xr.capture_pending;
 }
 
 static void Aeron_XrFinishCapture(SDL_GPUFence* fence) {
-	SDL_Surface* surface;
-	char         path[640];
-	void*        pixels;
+	int slot;
 
 	g_xr.capture_pending = 0;
 	if (!fence || !SDL_WaitForGPUFences(g_xr.device, true, &fence, 1)) {
 		return;
 	}
-	pixels = SDL_MapGPUTransferBuffer(g_xr.device, g_xr.capture_buffer, false);
-	if (!pixels) {
-		return;
-	}
-	surface = SDL_CreateSurfaceFrom(g_xr.screen_width, g_xr.screen_height,
-									g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB ||
-											g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM
-										? SDL_PIXELFORMAT_ARGB8888
-										: SDL_PIXELFORMAT_ABGR8888,
-									pixels, g_xr.screen_width * 4);
-	if (surface) {
-		SDL_snprintf(path, sizeof path, "%s/xr_screen_%06llu.bmp", g_xr.capture_dir,
-					 (unsigned long long)g_xr.frame_index);
-		if (SDL_SaveBMP(surface, path)) {
-			Aeron_LogInfo("aeron.xr", "captured virtual screen to %s", path);
+	for (slot = 0; slot < g_capture_count; ++slot) {
+		const int    width  = g_capture_sizes[slot][0];
+		const int    height = g_capture_sizes[slot][1];
+		void*        pixels = SDL_MapGPUTransferBuffer(g_xr.device, g_capture_buffers[slot], false);
+		SDL_Surface* surface;
+		char         path[640];
+		if (!pixels) {
+			continue;
 		}
-		SDL_DestroySurface(surface);
+		surface = SDL_CreateSurfaceFrom(width, height,
+										g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB ||
+												g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM
+											? SDL_PIXELFORMAT_ARGB8888
+											: SDL_PIXELFORMAT_ABGR8888,
+										pixels, width * 4);
+		if (surface) {
+			SDL_snprintf(path, sizeof path, "%s/xr_%s_%06llu.bmp", g_xr.capture_dir, g_capture_names[slot],
+						 (unsigned long long)g_xr.frame_index);
+			if (SDL_SaveBMP(surface, path)) {
+				Aeron_LogInfo("aeron.xr", "captured %s to %s", g_capture_names[slot], path);
+			}
+			SDL_DestroySurface(surface);
+		}
+		SDL_UnmapGPUTransferBuffer(g_xr.device, g_capture_buffers[slot]);
 	}
-	SDL_UnmapGPUTransferBuffer(g_xr.device, g_xr.capture_buffer);
+	g_capture_count = 0;
 }
 
 int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	XrSwapchainImageReleaseInfo         release_info = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, NULL };
 	XrCompositionLayerQuad              quad         = { XR_TYPE_COMPOSITION_LAYER_QUAD, NULL };
-	const XrCompositionLayerBaseHeader* layers[1];
+	const XrCompositionLayerBaseHeader* layers[3];
 	XrFrameEndInfo                      end_info = { XR_TYPE_FRAME_END_INFO, NULL };
 	XrResult                            result;
+	uint32_t                            stereo_layers;
 
 	if (g_xr.capture_pending) {
 		Aeron_XrFinishCapture(submitted_fence);
@@ -655,7 +664,13 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 	end_info.layerCount           = 0;
 	end_info.layers               = layers;
-	if (g_xr.should_render && g_xr.screen_has_released_image) {
+	stereo_layers                 = g_xr.should_render ? Aeron_XrStereoEndFrameLayers(layers, 3) : 0;
+	if (!g_xr.should_render) {
+		Aeron_XrStereoEndFrameLayers(layers, 0); /* release anything acquired */
+	}
+	if (stereo_layers > 0) {
+		end_info.layerCount = stereo_layers;
+	} else if (g_xr.should_render && g_xr.screen_has_released_image) {
 		const float aspect                    = (float)g_xr.screen_height / (float)g_xr.screen_width;
 		quad.space                            = g_xr.local_space;
 		quad.eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
@@ -673,9 +688,9 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	result           = g_xr.xrEndFrame(g_xr.session, &end_info);
 	g_xr.frame_begun = 0;
 	if ((g_xr.frame_index % 300u) == 0u) {
-		Aeron_LogInfo("aeron.xr", "frame %llu: display period %.2f ms, layers %u",
+		Aeron_LogInfo("aeron.xr", "frame %llu: display period %.2f ms, layers %u (%s)",
 					  (unsigned long long)g_xr.frame_index, (double)g_xr.predicted_display_period / 1.0e6,
-					  end_info.layerCount);
+					  end_info.layerCount, stereo_layers ? "stereo" : "screen");
 	}
 	g_xr.frame_index++;
 	if (XR_FAILED(result)) {
@@ -683,6 +698,15 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 		return 0;
 	}
 	return 1;
+}
+
+XrPath Aeron_XrPath(const char* string) {
+	XrPath path = XR_NULL_PATH;
+	if (g_xr.xrStringToPath && XR_FAILED(g_xr.xrStringToPath(g_xr.instance, string, &path))) {
+		Aeron_LogWarn("aeron.xr", "invalid OpenXR path %s", string);
+		path = XR_NULL_PATH;
+	}
+	return path;
 }
 
 double Aeron_XrDisplayRefreshRate(void) {

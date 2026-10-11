@@ -256,6 +256,8 @@ typedef struct AeronRuntime {
 
 extern AeronRuntime g_aeron;
 
+AeronTextureFormat Aeron_FromSdlTextureFormat(SDL_GPUTextureFormat format);
+
 void Aeron_CopyString(char* dst, size_t dst_size, const char* src);
 void AeronVfs_DeinitInternal(AeronVfs* vfs);
 

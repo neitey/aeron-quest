@@ -362,6 +362,9 @@ set(AERON_SOURCES
     src/vfs_iso9660.c
     src/window.c
     src/xr.c
+    src/xr_input.c
+    src/xr_input_map.c
+    src/xr_stereo.c
 )
 
 add_library(aeron ${AERON_SOURCES})
@@ -427,6 +430,9 @@ target_link_libraries(aeron
     PRIVATE
         aeron_yaml
 )
+if(NOT WIN32 AND NOT APPLE)
+    target_link_libraries(aeron PRIVATE m) # xr_input_map.c
+endif()
 
 add_dependencies(aeron aeron_shaders)
 
@@ -916,6 +922,7 @@ endif()
 option(AERON_BUILD_EXAMPLES "Build Aeron example apps" OFF)
 if(AERON_BUILD_EXAMPLES)
     add_subdirectory(examples/ui_demo)
+    add_subdirectory(examples/xr_stereo_test)
 endif()
 
 # Include optional modules, tools and examples even when they are not built.

@@ -460,6 +460,38 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	return 1;
 }
 
+int AeronScene_SetCamera(AeronScene3D* s, const AeronSceneCamera* camera) {
+	if (!s || !camera) {
+		return 0;
+	}
+	/* Re-latch only the camera; submissions stay queued so the same frame can
+	 * be rendered again from another viewpoint (stereo). Temporal jitter is
+	 * not applied: temporal modes are not valid across re-rendered views. */
+	s->output_camera = *camera;
+	if (s->output_camera.viewport.width <= 0 || s->output_camera.viewport.height <= 0) {
+		s->output_camera.viewport = (AeronRectI) { 0, 0, s->output_w, s->output_h };
+	}
+	s->camera          = s->output_camera;
+	s->camera.viewport = scene_render_viewport(s, s->output_camera.viewport);
+	float proj[16];
+	float view[16];
+	scene_mat4_perspective_reverse_z_xy(proj, s->camera.h_half_rad, s->camera.v_half_rad,
+										s->camera.near_z > 0.0f ? s->camera.near_z : 0.001f,
+										s->camera.proj_x_offset, s->camera.proj_y_offset);
+	scene_mat4_view(view, s->camera.ori, s->camera.pos);
+	scene_mat4_mul(s->unjittered_view_proj, proj, view);
+	memcpy(s->jittered_view_proj, s->unjittered_view_proj, sizeof s->jittered_view_proj);
+	s->temporal_jitter[0] = 0.0f;
+	s->temporal_jitter[1] = 0.0f;
+	memcpy(s->mb_prev_view_proj, s->unjittered_view_proj, sizeof s->mb_prev_view_proj);
+	memcpy(s->mb_prev_ori, s->camera.ori, sizeof s->mb_prev_ori);
+	s->mb_velocity_regen     = 0;
+	s->cluster_ready         = 0;
+	s->scene_rt_out          = s->color_rt;
+	s->scene_rt_out_borrowed = 0;
+	return 1;
+}
+
 void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
 	if (!s || !instance || !instance->mesh) {
 		return;

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "xr.h"
 
 static int Aeron_ClampInt(int value, int min_value, int max_value) {
 	if (value < min_value) {
@@ -137,7 +138,6 @@ int32_t Aeron_BeginFrame(void) {
 	has_platform_position   = Aeron_UpdateRawMouseFromPlatform(&g_aeron.input);
 	has_mouse_position      = has_platform_position && Aeron_RawMouseInsideWindow(&g_aeron.input);
 	Aeron_UpdateLogicalMouse(&g_aeron.input, &content_rect, has_mouse_position);
-	Aeron_DebugUiFilterInput(&g_aeron.input);
 
 	now_us   = Aeron_NowUs();
 	delta_us = now_us - g_aeron.last_frame_us;
@@ -145,6 +145,10 @@ int32_t Aeron_BeginFrame(void) {
 		delta_us = AERON_MAX_DELTA_US;
 	}
 	g_aeron.last_frame_us = now_us;
+
+	/* VR controllers: virtual gamepad, menu pointer, focus while in headset. */
+	Aeron_XrUpdateInput(&g_aeron.input, (float)delta_us * 1.0e-6f);
+	Aeron_DebugUiFilterInput(&g_aeron.input);
 
 	return (int32_t)delta_us;
 }

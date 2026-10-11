@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "xr.h"
 
 #include <string.h>
 
@@ -501,6 +502,9 @@ void Aeron_UpdateControllers(AeronInputSnapshot* input) {
 }
 
 int Aeron_ControllerHasRumble(uint32_t instance_id) {
+	if (Aeron_XrIsControllerId(instance_id)) {
+		return 1;
+	}
 	int slot = Aeron_FindControllerSlot((SDL_JoystickID)instance_id);
 	return slot >= 0 ? g_aeron.controllers[slot].has_rumble : 0;
 }
@@ -510,6 +514,10 @@ int Aeron_RumbleController(uint32_t instance_id, uint16_t low_frequency_rumble,
 	int                    slot = Aeron_FindControllerSlot((SDL_JoystickID)instance_id);
 	AeronControllerDevice* device;
 	const int stopping = (low_frequency_rumble == 0 && high_frequency_rumble == 0) || duration_ms == 0;
+
+	if (Aeron_XrIsControllerId(instance_id)) {
+		return Aeron_XrRumble(low_frequency_rumble, high_frequency_rumble, duration_ms);
+	}
 
 	if (slot < 0) {
 		if (!stopping) {

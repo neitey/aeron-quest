@@ -73,6 +73,20 @@ int Aeron_XrRecordCapture(SDL_GPUCommandBuffer* command_buffer);
  * xrEndFrame with the quad layer. */
 int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence);
 
+/* Stereo (xr_stereo.c): set by the game through aeron/xr.h. */
+int             Aeron_XrStereoCommitted(void);
+int             Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer);
+SDL_GPUTexture* Aeron_XrStereoTexture(int slot); /* 0 left, 1 right, 2 HUD */
+int             Aeron_XrStereoHudVisible(void);
+void            Aeron_XrStereoSize(int* width, int* height);
+
+/* Controller input (xr_input.c). The virtual Touch gamepad uses this id. */
+#define AERON_XR_CONTROLLER_INSTANCE_ID 0x58520001u
+struct AeronInputSnapshot;
+void Aeron_XrUpdateInput(struct AeronInputSnapshot* input, float dt_seconds);
+int  Aeron_XrIsControllerId(uint32_t instance_id);
+int  Aeron_XrRumble(uint16_t low, uint16_t high, uint32_t duration_ms);
+
 /* Predicted display period of the headset in Hz (0 when unknown). */
 double Aeron_XrDisplayRefreshRate(void);
 
