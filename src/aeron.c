@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "xr.h"
 
 #include <string.h>
 
@@ -94,6 +95,9 @@ int Aeron_Init(const AeronConfig* config) {
 	 * process them through Aeron_PumpEvents. */
 	SDL_PumpEvents();
 
+	if (config->xr_enabled || Aeron_XrRequested()) {
+		Aeron_XrSetRequested(1);
+	}
 	if (!Aeron_RenderBackendInit()) {
 		Aeron_WindowShutdown();
 		SDL_Quit();
@@ -143,3 +147,5 @@ int Aeron_QuitRequested(void) { return g_aeron.quit_requested; }
 int Aeron_FatalErrorRequested(void) { return g_aeron.fatal_error_requested; }
 
 AeronVfs* Aeron_GetVfs(void) { return &g_aeron.vfs; }
+
+int Aeron_XrIsPresenting(void) { return Aeron_XrSessionRunning(); }

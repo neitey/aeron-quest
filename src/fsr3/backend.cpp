@@ -2,6 +2,7 @@
 
 #include "aeron/log.h"
 
+#include <new>
 #include <FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_resources.h>
 #include <FidelityFX/host/ffx_fsr3upscaler.h>
 

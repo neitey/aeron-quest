@@ -58,10 +58,15 @@ typedef struct AeronConfig {
 	 * disabled, Aeron's default background is retained. */
 	int   clear_color_enabled;
 	float clear_color_rgba[4];
+	/* Request OpenXR presentation (also enabled by AERON_XR=1). Falls back to
+	 * the desktop window when no runtime/headset is available. */
+	int xr_enabled;
 } AeronConfig;
 
 /* Initializes SDL, the Aeron window, render backend, text input, and VFS. */
 int Aeron_Init(const AeronConfig* config);
+/* Nonzero while an OpenXR session is presenting frames. */
+int Aeron_XrIsPresenting(void);
 /* Shuts down Aeron and releases all runtime-owned resources. */
 void Aeron_Shutdown(void);
 

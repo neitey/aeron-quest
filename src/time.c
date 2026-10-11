@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "time_internal.h"
+#include "xr.h"
 
 uint64_t Aeron_NowUs(void) { return SDL_GetTicksNS() / 1000u; }
 
@@ -57,6 +58,10 @@ int Aeron_SetPresentationVsyncDivisor(int divisor) {
 int Aeron_PresentationVsyncDivisor(void) { return g_aeron.presentation_vsync_divisor == 2 ? 2 : 1; }
 
 double Aeron_DisplayRefreshRate(void) {
+	/* In XR the headset's predicted display period drives the loop. */
+	if (Aeron_XrSessionRunning() && Aeron_XrDisplayRefreshRate() > 0.0) {
+		return Aeron_XrDisplayRefreshRate();
+	}
 	if (g_aeron.display_refresh_hz <= 0.0) {
 		Aeron_RefreshPresentationTiming();
 	}

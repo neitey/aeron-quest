@@ -361,6 +361,7 @@ set(AERON_SOURCES
     src/vfs.c
     src/vfs_iso9660.c
     src/window.c
+    src/xr.c
 )
 
 add_library(aeron ${AERON_SOURCES})
@@ -379,6 +380,27 @@ target_include_directories(aeron
 foreach(format IN LISTS AERON_SHADER_FORMATS)
     target_compile_definitions(aeron PRIVATE AERON_SHADER_FORMAT_${format}=1)
 endforeach()
+
+# OpenXR presentation needs SDL_GPU's XR API (SDL_openxr.h, SDL 3.6 /
+# current SDL main). Without it xr.c builds inert stubs.
+get_target_property(AERON_SDL3_INCLUDES SDL3::SDL3-shared INTERFACE_INCLUDE_DIRECTORIES)
+find_file(AERON_SDL_OPENXR_HEADER SDL3/SDL_openxr.h HINTS ${AERON_SDL3_INCLUDES} "${SDL3_DIR}/../../../include")
+if(AERON_SDL_OPENXR_HEADER)
+    set(AERON_OPENXR_DEFAULT ON)
+else()
+    set(AERON_OPENXR_DEFAULT OFF)
+endif()
+option(AERON_ENABLE_OPENXR "Build OpenXR (VR headset) presentation" ${AERON_OPENXR_DEFAULT})
+if(AERON_ENABLE_OPENXR)
+    if(NOT AERON_SDL_OPENXR_HEADER)
+        message(FATAL_ERROR "AERON_ENABLE_OPENXR requires an SDL3 with SDL_openxr.h (SDL 3.6 or SDL main)")
+    endif()
+    target_include_directories(aeron PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include)
+    target_compile_definitions(aeron PRIVATE AERON_HAS_OPENXR=1)
+    message(STATUS "Aeron: OpenXR presentation enabled")
+else()
+    message(STATUS "Aeron: OpenXR presentation disabled")
+endif()
 
 if(SDL3_VERSION VERSION_GREATER_EQUAL "3.4.0" AND AERON_VULKAN_INCLUDE_DIR)
     target_include_directories(aeron PRIVATE ${AERON_VULKAN_INCLUDE_DIR})
