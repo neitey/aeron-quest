@@ -232,34 +232,37 @@ static int Aeron_XrLoadFunctions(void) {
 }
 
 static SDL_GPUTextureFormat Aeron_XrPickFormat(SDL_GPUTextureFormat preferred) {
+	/* The composition shaders output LINEAR light, so the virtual screen must
+	 * be an _SRGB format (hardware encodes on write, which is also what XR
+	 * compositors expect) or a float format. Plain UNORM would look too dark. */
+	static const SDL_GPUTextureFormat ranked[] = {
+		SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB,
+		SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB,
+		SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+	};
 	int                   count   = 0;
 	SDL_GPUTextureFormat* formats = SDL_GetGPUXRSwapchainFormats(g_xr.device, g_xr.session, &count);
 	SDL_GPUTextureFormat  chosen  = SDL_GPU_TEXTUREFORMAT_INVALID;
+	size_t                r;
 	int                   i;
 
+	(void)preferred;
 	if (!formats) {
 		Aeron_LogError("aeron.xr", "SDL_GetGPUXRSwapchainFormats failed: %s", SDL_GetError());
 		return SDL_GPU_TEXTUREFORMAT_INVALID;
 	}
-	/* The composition shaders write linear values when the target is an
-	 * _SRGB format (hardware encodes), which is also what XR compositors
-	 * expect, so prefer the desktop swapchain's format, then any sRGB one. */
-	for (i = 0; i < count && formats[i] != SDL_GPU_TEXTUREFORMAT_INVALID; ++i) {
-		if (formats[i] == preferred) {
-			chosen = preferred;
-			break;
-		}
-	}
-	for (i = 0;
-		 chosen == SDL_GPU_TEXTUREFORMAT_INVALID && i < count && formats[i] != SDL_GPU_TEXTUREFORMAT_INVALID;
-		 ++i) {
-		if (formats[i] == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB ||
-			formats[i] == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB) {
-			chosen = formats[i];
+	for (r = 0; r < SDL_arraysize(ranked) && chosen == SDL_GPU_TEXTUREFORMAT_INVALID; ++r) {
+		for (i = 0; i < count && formats[i] != SDL_GPU_TEXTUREFORMAT_INVALID; ++i) {
+			if (formats[i] == ranked[r]) {
+				chosen = ranked[r];
+				break;
+			}
 		}
 	}
 	if (chosen == SDL_GPU_TEXTUREFORMAT_INVALID && count > 0) {
 		chosen = formats[0];
+		Aeron_LogWarn("aeron.xr", "no sRGB/float XR swapchain format; using %d (colors may be off)",
+					  (int)chosen);
 	}
 	SDL_free(formats);
 	return chosen;
@@ -561,7 +564,8 @@ int Aeron_XrRecordCapture(SDL_GPUCommandBuffer* command_buffer) {
 	SDL_GPUCopyPass*           copy_pass;
 	const Uint32               size = (Uint32)g_xr.screen_width * (Uint32)g_xr.screen_height * 4u;
 
-	if (!command_buffer || !g_xr.screen_texture || !Aeron_XrCaptureDue()) {
+	if (!command_buffer || !g_xr.screen_texture || !Aeron_XrCaptureDue() ||
+		g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT) {
 		return 0;
 	}
 	if (!g_xr.capture_buffer) {

@@ -2,12 +2,17 @@
 
 #include <cerrno>
 #include <cstddef>
+#include <cstdlib>
 #include <cwchar>
 
 #include <FidelityFX/host/ffx_util.h>
 
-#if !defined(_WIN32)
+#if !defined(_countof)
+/* MinGW-w64 (llvm-mingw/libc++) does not always pull in stdlib.h's _countof. */
 #define _countof(array) (sizeof(array) / sizeof((array)[0]))
+#endif
+
+#if !defined(_WIN32)
 
 template <std::size_t N> static int aeronWcscpy(wchar_t (&destination)[N], const wchar_t* source) {
 	if (!source) {

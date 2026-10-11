@@ -23,13 +23,48 @@ static SDL_LogPriority Aeron_LogSdlPriority(AeronLogLevel level) {
 	}
 }
 
+/* Optional plain-text log file (AERON_LOG_FILE=path). GUI-subsystem Windows
+ * builds have no console, so this is how a tester can send logs back. */
+static SDL_IOStream* Aeron_LogFile(void) {
+	static int           opened;
+	static SDL_IOStream* file;
+	if (!opened) {
+		const char* path = SDL_getenv("AERON_LOG_FILE");
+		opened           = 1;
+		if (path && path[0]) {
+			file = SDL_IOFromFile(path, "w");
+		}
+	}
+	return file;
+}
+
+static const char* Aeron_LogLevelName(AeronLogLevel level) {
+	switch (level) {
+		case AERON_LOG_WARN:
+			return "WARN ";
+		case AERON_LOG_ERROR:
+			return "ERROR";
+		case AERON_LOG_CRITICAL:
+			return "CRIT ";
+		default:
+			return "INFO ";
+	}
+}
+
 void Aeron_LogMessageV(AeronLogLevel level, const char* category, const char* fmt, va_list args) {
 	char            message[1024];
 	SDL_LogPriority priority;
+	SDL_IOStream*   file;
 
 	priority = Aeron_LogSdlPriority(level);
 	SDL_vsnprintf(message, sizeof(message), fmt ? fmt : "", args);
 	SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, priority, "%s: %s", category ? category : "aeron", message);
+	file = Aeron_LogFile();
+	if (file) {
+		SDL_IOprintf(file, "%10.3f %s %s: %s\n", (double)SDL_GetTicks() / 1000.0, Aeron_LogLevelName(level),
+					 category ? category : "aeron", message);
+		SDL_FlushIO(file);
+	}
 }
 
 void Aeron_LogMessage(AeronLogLevel level, const char* category, const char* fmt, ...) {

@@ -656,6 +656,11 @@ if(MSVC)
 else()
     target_compile_options(aeron_fsr3_host PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 endif()
+if(MINGW)
+    # AMD's sources rely on MSVC's windows.h pulling in the secure CRT
+    # (swprintf_s, _countof); llvm-mingw/libc++ does not do that implicitly.
+    target_compile_options(aeron_fsr3_host PRIVATE "SHELL:-include cstdio" "SHELL:-include cwchar" "SHELL:-include cstdlib")
+endif()
 
 # Reusable SDL_GPU backend for the FSR 3.1.4 host scheduler. The public
 # temporal-upscaler facade is added to this target below.
