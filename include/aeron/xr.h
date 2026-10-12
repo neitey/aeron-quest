@@ -49,6 +49,12 @@ typedef struct AeronXrStereoFrame {
 	AeronRenderTarget* console_target;
 	int                console_width;
 	int                console_height;
+	/* Card layer: a second panel of the same kind (e.g. a reference card
+	 * the player can pick up), card_width x card_height, NULL when
+	 * unavailable. Shown when committed with Aeron_XrStereoCommitCard. */
+	AeronRenderTarget* card_target;
+	int                card_width;
+	int                card_height;
 } AeronXrStereoFrame;
 
 /* Quad that shows a HUD target over the 3D view.
@@ -102,6 +108,9 @@ void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPa
  * console_target pixels; all-zero rect = the whole target), on top of the
  * other layers. */
 void Aeron_XrStereoCommitConsole(const AeronXrPanel* console);
+/* The same for the card target (all-zero rect = the whole target); drawn
+ * under the console. */
+void Aeron_XrStereoCommitCard(const AeronXrPanel* card);
 /* The eye targets are a 3D environment around the flat virtual screen:
  * Aeron_Present submits the eyes as the projection layer and the composed
  * 2D layers on the virtual screen quad on top (menus in a VR room). The
