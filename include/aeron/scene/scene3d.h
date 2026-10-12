@@ -301,6 +301,21 @@ int AeronScene_PrepareResources(AeronScene3D* scene, AeronCullMode mesh_cull);
  * Render() completes. Over-capacity submissions are dropped with a
  * once-per-frame log. */
 void AeronScene_AddMeshInstance(AeronScene3D* scene, const AeronSceneMeshInstance* instance);
+
+/* Position in this frame's submission lists. Two marks bracket a group of
+ * submissions (mesh instances, billboards, mesh overlays) that can then be
+ * moved together between renders of the same frame, e.g. a cockpit that
+ * has to follow each eye's camera offset in stereo. */
+typedef struct AeronSceneMark {
+	int instances;
+	int billboards;
+	int overlays;
+} AeronSceneMark;
+AeronSceneMark AeronScene_Mark(const AeronScene3D* scene);
+/* Translates everything submitted between `begin` and `end` by `delta`
+ * (world units). Takes effect at the next AeronScene_Render. */
+void AeronScene_TranslateRange(AeronScene3D* scene, const AeronSceneMark* begin, const AeronSceneMark* end,
+							   const float delta[3]);
 /* Returns one when accepted. Capacity failures are counted and logged once
  * per frame rather than silently dropping a light. */
 int AeronScene_AddLight(AeronScene3D* scene, const AeronSceneLight* light);

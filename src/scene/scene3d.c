@@ -528,6 +528,48 @@ void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* i
 	s->instances[s->instance_count++] = *instance;
 }
 
+AeronSceneMark AeronScene_Mark(const AeronScene3D* s) {
+	AeronSceneMark mark = { 0, 0, 0 };
+	if (s) {
+		mark.instances  = s->instance_count;
+		mark.billboards = s->bb_count;
+		mark.overlays   = (int)s->overlay_count;
+	}
+	return mark;
+}
+
+static void scene_translate_row_major(float m[16], const float d[3]) {
+	m[3] += d[0];
+	m[7] += d[1];
+	m[11] += d[2];
+}
+
+void AeronScene_TranslateRange(AeronScene3D* s, const AeronSceneMark* begin, const AeronSceneMark* end,
+							   const float delta[3]) {
+	if (!s || !begin || !end || !delta) {
+		return;
+	}
+	for (int i = begin->instances; i < end->instances && i < s->instance_count; ++i) {
+		scene_translate_row_major(s->instances[i].transform, delta);
+		scene_translate_row_major(s->instances[i].prev_transform, delta);
+	}
+	for (int i = begin->billboards; i < end->billboards && i < s->bb_count; ++i) {
+		AeronSceneBb3dEntry* e = &s->bb_entries[i];
+		for (int c = 0; c < 4; ++c) {
+			for (int a = 0; a < 3; ++a) {
+				e->corners[c][a] += delta[a];
+				e->prev_corners[c][a] += delta[a];
+			}
+		}
+		for (int a = 0; a < 3; ++a) {
+			e->anchor[a] += delta[a];
+		}
+	}
+	for (int i = begin->overlays; i < end->overlays && i < (int)s->overlay_count; ++i) {
+		scene_translate_row_major(s->overlays[i].transform, delta);
+	}
+}
+
 int AeronScene_AddLight(AeronScene3D* s, const AeronSceneLight* light) {
 	if (!s || !light) {
 		return 0;
