@@ -279,10 +279,15 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 					  XR_VERSION_MINOR(instance_properties.runtimeVersion),
 					  XR_VERSION_PATCH(instance_properties.runtimeVersion));
 	}
+	g_xr.max_layers = XR_MIN_COMPOSITION_LAYERS_SUPPORTED;
 	if (XR_SUCCEEDED(g_xr.xrGetSystemProperties(g_xr.instance, g_xr.system_id, &system_properties))) {
-		Aeron_LogInfo("aeron.xr", "OpenXR system: %s (max swapchain %ux%u)", system_properties.systemName,
+		Aeron_LogInfo("aeron.xr", "OpenXR system: %s (max swapchain %ux%u, %u layers)", system_properties.systemName,
 					  system_properties.graphicsProperties.maxSwapchainImageWidth,
-					  system_properties.graphicsProperties.maxSwapchainImageHeight);
+					  system_properties.graphicsProperties.maxSwapchainImageHeight,
+					  system_properties.graphicsProperties.maxLayerCount);
+		if (system_properties.graphicsProperties.maxLayerCount > g_xr.max_layers) {
+			g_xr.max_layers = system_properties.graphicsProperties.maxLayerCount;
+		}
 	}
 
 	result = SDL_CreateGPUXRSession(device, &session_info, &g_xr.session);
@@ -648,7 +653,7 @@ static void Aeron_XrFinishCapture(SDL_GPUFence* fence) {
 int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	XrSwapchainImageReleaseInfo         release_info = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, NULL };
 	XrCompositionLayerQuad              quad         = { XR_TYPE_COMPOSITION_LAYER_QUAD, NULL };
-	const XrCompositionLayerBaseHeader* layers[4];
+	const XrCompositionLayerBaseHeader* layers[AERON_XR_MAX_LAYERS];
 	XrFrameEndInfo                      end_info = { XR_TYPE_FRAME_END_INFO, NULL };
 	XrResult                            result;
 	uint32_t                            stereo_layers;
@@ -676,7 +681,8 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 	end_info.layerCount           = 0;
 	end_info.layers               = layers;
-	stereo_layers                 = g_xr.should_render ? Aeron_XrStereoEndFrameLayers(layers, 4) : 0;
+	stereo_layers                 = g_xr.should_render ? Aeron_XrStereoEndFrameLayers(
+															 layers, g_xr.max_layers < AERON_XR_MAX_LAYERS ? g_xr.max_layers : AERON_XR_MAX_LAYERS) : 0;
 	if (!g_xr.should_render) {
 		Aeron_XrStereoEndFrameLayers(layers, 0); /* release anything acquired */
 	}

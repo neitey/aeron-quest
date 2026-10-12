@@ -58,6 +58,18 @@ typedef struct AeronXrHudQuad {
 	float follow_s;
 } AeronXrHudQuad;
 
+/* A rectangle of hud_target shown as its own quad in LOCAL space, e.g. one
+ * HUD instrument placed in the cockpit. The quad faces +Z of its
+ * orientation. */
+typedef struct AeronXrPanel {
+	int   rect[4];        /* x, y, width, height in hud_target pixels */
+	float position[3];    /* centre, metres, LOCAL space */
+	float orientation[4]; /* quaternion x, y, z, w */
+	float size[2];        /* width, height in metres */
+} AeronXrPanel;
+
+#define AERON_XR_MAX_PANELS 12
+
 /* Returns 1 and fills `out` when this host frame can be rendered in stereo
  * (session focused/visible, frame begun, runtime wants content, views
  * tracked). Safe to call more than once per frame. */
@@ -70,6 +82,10 @@ void Aeron_XrStereoCommit(const AeronXrHudQuad* hud);
 /* As Aeron_XrStereoCommit, with an optional second quad for
  * hud_world_target (drawn behind `hud`). Either may be NULL. */
 void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* hud_world);
+/* As Aeron_XrStereoCommitHuds with hud = NULL: instead of one HUD quad,
+ * `count` panels each show a part of hud_target. Panels beyond what the
+ * runtime's layer limit allows are dropped (last first). */
+void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPanel* panels, int count);
 
 #ifdef __cplusplus
 }

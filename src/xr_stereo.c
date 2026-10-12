@@ -30,6 +30,12 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
 	(void)hud_world;
 }
 
+void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPanel* panels, int count) {
+	(void)hud_world;
+	(void)panels;
+	(void)count;
+}
+
 int Aeron_XrStereoCommitted(void) { return 0; }
 
 int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* c) {
@@ -100,6 +106,10 @@ typedef struct AeronXrStereo {
 	XrCompositionLayerProjection     projection;
 	XrCompositionLayerQuad           hud_quad;
 	XrCompositionLayerQuad           hud_world_quad;
+	/* Cockpit panels: parts of the HUD target as separate quads. */
+	AeronXrPanel           panels[AERON_XR_MAX_PANELS];
+	int                    panel_count;
+	XrCompositionLayerQuad panel_quads[AERON_XR_MAX_PANELS];
 } AeronXrStereo;
 
 static AeronXrStereo g_st;
@@ -338,7 +348,8 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
 	if (!g_st.ready || !g_st.located || g_st.located_frame != g_xr.frame_index) {
 		return;
 	}
-	g_st.committed = 1;
+	g_st.committed   = 1;
+	g_st.panel_count = 0;
 	memset(&g_st.hud, 0, sizeof g_st.hud);
 	memset(&g_st.hud_world, 0, sizeof g_st.hud_world);
 	if (hud) {
@@ -350,6 +361,42 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
 }
 
 void Aeron_XrStereoCommit(const AeronXrHudQuad* hud) { Aeron_XrStereoCommitHuds(hud, NULL); }
+
+void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPanel* panels, int count) {
+	Aeron_XrStereoCommitHuds(NULL, hud_world);
+	if (!g_st.committed || !panels || count <= 0) {
+		return;
+	}
+	if (count > AERON_XR_MAX_PANELS) {
+		count = AERON_XR_MAX_PANELS;
+	}
+	for (int i = 0; i < count; ++i) {
+		const AeronXrPanel* p = &panels[i];
+		/* Clamp to the target; drop empty rectangles. */
+		int x = p->rect[0] < 0 ? 0 : p->rect[0];
+		int y = p->rect[1] < 0 ? 0 : p->rect[1];
+		int r = p->rect[0] + p->rect[2];
+		int b = p->rect[1] + p->rect[3];
+		if (r > g_st.width) {
+			r = g_st.width;
+		}
+		if (b > g_st.height) {
+			b = g_st.height;
+		}
+		if (r - x < 2 || b - y < 2 || p->size[0] <= 0.0f || p->size[1] <= 0.0f) {
+			continue;
+		}
+		g_st.panels[g_st.panel_count]         = *p;
+		g_st.panels[g_st.panel_count].rect[0] = x;
+		g_st.panels[g_st.panel_count].rect[1] = y;
+		g_st.panels[g_st.panel_count].rect[2] = r - x;
+		g_st.panels[g_st.panel_count].rect[3] = b - y;
+		g_st.panel_count++;
+	}
+	/* The panels sample the head HUD target, so it has to be submitted. */
+	g_st.hud.visible = g_st.panel_count > 0;
+	g_st.hud.size[0] = 0.0f; /* no full-size head quad */
+}
 
 int Aeron_XrStereoCommitted(void) {
 	return g_st.ready && g_st.committed && g_st.located_frame == g_xr.frame_index && Aeron_XrShouldRender();
@@ -445,15 +492,6 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 		SDL_BlitGPUTexture(command_buffer, &blit);
 	}
 	return ok;
-}
-
-static XrQuaternionf Aeron_XrQuatMul(XrQuaternionf a, XrQuaternionf b) {
-	XrQuaternionf r;
-	r.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
-	r.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
-	r.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
-	r.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
-	return r;
 }
 
 static XrVector3f Aeron_XrQuatRotate(XrQuaternionf q, XrVector3f v) {
@@ -604,9 +642,34 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		Aeron_XrFillQuad(&g_st.hud_world_quad, AERON_XR_SLOT_HUD_WORLD, &g_st.hud_world);
 		layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.hud_world_quad;
 	}
-	if (g_st.hud.visible && g_st.chains[AERON_XR_SLOT_HUD].released_once && count < capacity) {
+	if (g_st.hud.visible && g_st.hud.size[0] > 0.0f && g_st.chains[AERON_XR_SLOT_HUD].released_once &&
+		count < capacity) {
 		Aeron_XrFillQuad(&g_st.hud_quad, AERON_XR_SLOT_HUD, &g_st.hud);
 		layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.hud_quad;
+	}
+	if (g_st.chains[AERON_XR_SLOT_HUD].released_once) {
+		for (int i = 0; i < g_st.panel_count && count < capacity; ++i) {
+			const AeronXrPanel*     p    = &g_st.panels[i];
+			XrCompositionLayerQuad* quad = &g_st.panel_quads[i];
+			memset(quad, 0, sizeof *quad);
+			quad->type                              = XR_TYPE_COMPOSITION_LAYER_QUAD;
+			quad->layerFlags                        = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+			quad->space                             = g_xr.local_space;
+			quad->eyeVisibility                     = XR_EYE_VISIBILITY_BOTH;
+			quad->subImage.swapchain                = g_st.chains[AERON_XR_SLOT_HUD].swapchain;
+			quad->subImage.imageRect.offset.x       = p->rect[0];
+			quad->subImage.imageRect.offset.y       = p->rect[1];
+			quad->subImage.imageRect.extent.width   = p->rect[2];
+			quad->subImage.imageRect.extent.height  = p->rect[3];
+			quad->pose.orientation = Aeron_XrQuatNormalize((XrQuaternionf) { p->orientation[0], p->orientation[1],
+																			 p->orientation[2], p->orientation[3] });
+			quad->pose.position.x = p->position[0];
+			quad->pose.position.y = p->position[1];
+			quad->pose.position.z = p->position[2];
+			quad->size.width      = p->size[0];
+			quad->size.height     = p->size[1];
+			layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
+		}
 	}
 	if (!g_st.hud.visible || !g_st.hud.head_locked) {
 		g_st.follow_valid = 0; /* next appearance starts in place, no swoop */
