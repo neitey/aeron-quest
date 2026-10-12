@@ -35,13 +35,27 @@ typedef struct AeronXrStereoFrame {
 	AeronTextureFormat format;         /* eye/HUD target format (sRGB or float) */
 	AeronRenderTarget* eye_targets[2]; /* write final display-ready colour here */
 	AeronRenderTarget* hud_target;     /* same size; clear to transparent, draw HUD */
+	/* Second HUD layer for elements that belong to the world (reticle,
+	 * target brackets), shown behind hud_target. Same size and use. */
+	AeronRenderTarget* hud_world_target;
 } AeronXrStereoFrame;
 
-/* World-locked quad (LOCAL space) that shows hud_target over the 3D view. */
+/* Quad that shows a HUD target over the 3D view.
+ *
+ * World-locked (head_locked = 0): `position` is the centre in LOCAL space,
+ * the quad faces +Z.
+ *
+ * Head-locked (head_locked = 1): `position` is relative to the head (e.g.
+ * {0, 0, -3} = 3 m straight ahead) and the quad turns with the head, like
+ * a helmet visor display. With follow_s > 0 it trails the head smoothly
+ * (exponential ease with that time constant, in seconds) instead of being
+ * rigidly attached. */
 typedef struct AeronXrHudQuad {
 	int   visible;
 	float position[3]; /* centre, metres */
 	float size[2];     /* width, height in metres */
+	int   head_locked;
+	float follow_s;
 } AeronXrHudQuad;
 
 /* Returns 1 and fills `out` when this host frame can be rendered in stereo
@@ -53,6 +67,9 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out);
  * HUD quad when `hud` is non-NULL and visible). Call after recording the eye
  * renders into a command buffer that is submitted before Aeron_Present. */
 void Aeron_XrStereoCommit(const AeronXrHudQuad* hud);
+/* As Aeron_XrStereoCommit, with an optional second quad for
+ * hud_world_target (drawn behind `hud`). Either may be NULL. */
+void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* hud_world);
 
 #ifdef __cplusplus
 }

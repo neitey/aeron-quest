@@ -8,6 +8,11 @@
  *   intersected with the virtual screen and drives the mouse: trigger = left
  *   click, grip = right click.
  * - The left menu button is delivered as Escape.
+ * - Menu-keys mode (Aeron_XrSetMenuKeys) turns sticks and face buttons into
+ *   arrow/Enter/Space/Escape keys for keyboard-only menus.
+ * - Flight-buttons mode (Aeron_XrSetFlightButtons) queues face-button,
+ *   left-trigger, stick-click and grip presses (left grip = shift layer,
+ *   right-stick flicks while shifted) for the game to bind to its actions.
  * - Rumble requests for the virtual gamepad become controller haptics.
  */
 
@@ -25,8 +30,61 @@
 #include <string.h>
 
 static int g_xr_pointer_enabled = 1;
+static int g_xr_menu_keys       = 0;
+static int g_xr_flight_buttons  = 0;
+
+#define AERON_XR_BUTTON_QUEUE 32
+
+typedef struct AeronXrButtonPress {
+	uint8_t button;
+	uint8_t shifted;
+} AeronXrButtonPress;
+
+static AeronXrButtonPress g_xr_button_queue[AERON_XR_BUTTON_QUEUE];
+static int                g_xr_button_head;
+static int                g_xr_button_count;
 
 void Aeron_XrSetPointerEnabled(int enabled) { g_xr_pointer_enabled = enabled != 0; }
+
+void Aeron_XrSetMenuKeys(int enabled) { g_xr_menu_keys = enabled != 0; }
+
+void Aeron_XrSetFlightButtons(int enabled) {
+	g_xr_flight_buttons = enabled != 0;
+	if (!g_xr_flight_buttons) {
+		g_xr_button_head  = 0;
+		g_xr_button_count = 0;
+	}
+}
+
+int Aeron_XrPollButton(AeronXrButton* button, int* shifted) {
+	const AeronXrButtonPress* press;
+	if (g_xr_button_count <= 0) {
+		return 0;
+	}
+	press            = &g_xr_button_queue[g_xr_button_head];
+	g_xr_button_head = (g_xr_button_head + 1) % AERON_XR_BUTTON_QUEUE;
+	--g_xr_button_count;
+	if (button) {
+		*button = (AeronXrButton)press->button;
+	}
+	if (shifted) {
+		*shifted = press->shifted;
+	}
+	return 1;
+}
+
+#if defined(AERON_HAS_OPENXR)
+static void Aeron_XrQueueButton(AeronXrButton button, int shifted) {
+	AeronXrButtonPress* press;
+	if (g_xr_button_count >= AERON_XR_BUTTON_QUEUE) {
+		return; /* the game is not draining; drop rather than replay late */
+	}
+	press          = &g_xr_button_queue[(g_xr_button_head + g_xr_button_count) % AERON_XR_BUTTON_QUEUE];
+	press->button  = (uint8_t)button;
+	press->shifted = (uint8_t)(shifted != 0);
+	++g_xr_button_count;
+}
+#endif
 
 int Aeron_XrIsControllerId(uint32_t instance_id) { return instance_id == AERON_XR_CONTROLLER_INSTANCE_ID; }
 
@@ -66,6 +124,15 @@ typedef struct AeronXrInput {
 	float              pointer_logical_x;
 	float              pointer_logical_y;
 	int                logged_active;
+
+	/* Keys this module is holding down in the input snapshot. */
+	uint8_t key_held[AERON_KEY_COUNT];
+	/* Menu keys: current stick direction key and its repeat timer. */
+	AeronKey menu_dir_key;
+	float    menu_repeat_timer;
+	int      menu_enter_prev, menu_space_prev, menu_escape_prev;
+	/* Flight buttons: previous digital state per AeronXrButton. */
+	uint8_t button_prev[AERON_XR_BUTTON_COUNT];
 } AeronXrInput;
 
 static AeronXrInput g_in;
@@ -280,6 +347,171 @@ static void Aeron_XrStick(int hand, float out[2], int* active) {
 	}
 }
 
+/* Presses (down = 1), repeats (down = 2) or releases (down = 0) a key in the
+ * snapshot the way a physical keyboard event would. */
+static void Aeron_XrKey(AeronInputSnapshot* input, AeronKey key, int down) {
+	AeronKeyEvent* event;
+	if ((int)key <= 0 || (int)key >= AERON_KEY_COUNT) {
+		return;
+	}
+	if (down) {
+		if (!input->key_down[key] && down == 1) {
+			input->key_pressed[key] = 1;
+		}
+		if (input->key_typed[key] < 255) {
+			input->key_typed[key]++;
+		}
+		input->key_down[key] = 1;
+		g_in.key_held[key]   = 1;
+	} else {
+		if (!g_in.key_held[key]) {
+			return;
+		}
+		if (input->key_down[key]) {
+			input->key_released[key] = 1;
+		}
+		input->key_down[key] = 0;
+		g_in.key_held[key]   = 0;
+	}
+	if (input->key_event_count < AERON_KEY_EVENT_CAPACITY) {
+		event = &input->key_events[input->key_event_count++];
+		memset(event, 0, sizeof *event);
+		event->chord.key = (uint16_t)key;
+		event->down      = down != 0;
+		event->repeat    = down == 2;
+	} else {
+		input->key_events_overflow = 1;
+	}
+}
+
+/* Edge-triggered key that follows a digital source. */
+static void Aeron_XrKeyFollow(AeronInputSnapshot* input, AeronKey key, int now, int* previous) {
+	if (now && !*previous) {
+		Aeron_XrKey(input, key, 1);
+	} else if (!now && *previous) {
+		Aeron_XrKey(input, key, 0);
+	}
+	*previous = now;
+}
+
+static void Aeron_XrReleaseMenuKeys(AeronInputSnapshot* input) {
+	if (g_in.menu_dir_key) {
+		Aeron_XrKey(input, g_in.menu_dir_key, 0);
+		g_in.menu_dir_key = (AeronKey)0;
+	}
+	Aeron_XrKeyFollow(input, AERON_KEY_RETURN, 0, &g_in.menu_enter_prev);
+	Aeron_XrKeyFollow(input, AERON_KEY_SPACE, 0, &g_in.menu_space_prev);
+	if (g_in.menu_escape_prev) {
+		Aeron_XrKeyFollow(input, AERON_KEY_ESCAPE, 0, &g_in.menu_escape_prev);
+	}
+}
+
+/* Thumbsticks -> arrow keys with typematic repeat; A / right trigger ->
+ * Enter, X -> Space, B -> Escape. */
+static void Aeron_XrApplyMenuKeys(AeronInputSnapshot* input, const AeronXrTouchState* touch, float dt) {
+	const float press_threshold   = 0.6f;
+	const float release_threshold = 0.35f;
+	float       sx                = 0.0f;
+	float       sy                = 0.0f;
+	float       mag;
+	AeronKey    dir = (AeronKey)0;
+
+	/* The stick deflected furthest wins. */
+	if (touch->active_right) {
+		sx = touch->right_stick[0];
+		sy = touch->right_stick[1];
+	}
+	if (touch->active_left &&
+		fmaxf(fabsf(touch->left_stick[0]), fabsf(touch->left_stick[1])) > fmaxf(fabsf(sx), fabsf(sy))) {
+		sx = touch->left_stick[0];
+		sy = touch->left_stick[1];
+	}
+	mag = fmaxf(fabsf(sx), fabsf(sy));
+	if (g_in.menu_dir_key && mag > release_threshold) {
+		dir = g_in.menu_dir_key; /* hysteresis: keep the held direction */
+		if (mag >= press_threshold) {
+			const AeronKey wanted = fabsf(sx) > fabsf(sy) ? (sx > 0.0f ? AERON_KEY_RIGHT : AERON_KEY_LEFT)
+														  : (sy > 0.0f ? AERON_KEY_UP : AERON_KEY_DOWN);
+			dir                   = wanted;
+		}
+	} else if (mag >= press_threshold) {
+		dir = fabsf(sx) > fabsf(sy) ? (sx > 0.0f ? AERON_KEY_RIGHT : AERON_KEY_LEFT)
+									: (sy > 0.0f ? AERON_KEY_UP : AERON_KEY_DOWN);
+	}
+	if (dir != g_in.menu_dir_key) {
+		if (g_in.menu_dir_key) {
+			Aeron_XrKey(input, g_in.menu_dir_key, 0);
+		}
+		g_in.menu_dir_key = dir;
+		if (dir) {
+			Aeron_XrKey(input, dir, 1);
+			g_in.menu_repeat_timer = 0.45f;
+		}
+	} else if (dir) {
+		g_in.menu_repeat_timer -= dt;
+		if (g_in.menu_repeat_timer <= 0.0f) {
+			Aeron_XrKey(input, dir, 2);
+			g_in.menu_repeat_timer += 0.15f;
+			if (g_in.menu_repeat_timer <= 0.0f) {
+				g_in.menu_repeat_timer = 0.15f;
+			}
+		}
+	}
+
+	Aeron_XrKeyFollow(input, AERON_KEY_RETURN, touch->a || (touch->active_right && touch->right_trigger >= 0.5f),
+					  &g_in.menu_enter_prev);
+	Aeron_XrKeyFollow(input, AERON_KEY_SPACE, touch->x, &g_in.menu_space_prev);
+	Aeron_XrKeyFollow(input, AERON_KEY_ESCAPE, touch->b, &g_in.menu_escape_prev);
+}
+
+/* Records flight-button edges. Always tracks state so that turning the mode
+ * on mid-press does not produce a phantom press. */
+static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
+	const int shifted = touch->active_left && touch->left_grip >= 0.5f;
+	uint8_t   now[AERON_XR_BUTTON_COUNT];
+	int       b;
+
+	memset(now, 0, sizeof now);
+	now[AERON_XR_BUTTON_A]            = (uint8_t)touch->a;
+	now[AERON_XR_BUTTON_B]            = (uint8_t)touch->b;
+	now[AERON_XR_BUTTON_X]            = (uint8_t)touch->x;
+	now[AERON_XR_BUTTON_Y]            = (uint8_t)touch->y;
+	now[AERON_XR_BUTTON_LEFT_STICK]   = (uint8_t)touch->left_stick_click;
+	now[AERON_XR_BUTTON_RIGHT_STICK]  = (uint8_t)touch->right_stick_click;
+	/* Hysteresis on the analog ones so a resting finger doesn't chatter. */
+	now[AERON_XR_BUTTON_LEFT_TRIGGER] = (uint8_t)(touch->active_left &&
+		touch->left_trigger >= (g_in.button_prev[AERON_XR_BUTTON_LEFT_TRIGGER] ? 0.35f : 0.5f));
+	now[AERON_XR_BUTTON_RIGHT_GRIP]   = (uint8_t)(touch->active_right &&
+		touch->right_grip >= (g_in.button_prev[AERON_XR_BUTTON_RIGHT_GRIP] ? 0.35f : 0.5f));
+	if (shifted && touch->active_right) {
+		const float x       = touch->right_stick[0];
+		const float y       = touch->right_stick[1];
+		const float mag     = fmaxf(fabsf(x), fabsf(y));
+		int         was_any = 0;
+		for (b = AERON_XR_BUTTON_FLICK_UP; b <= AERON_XR_BUTTON_FLICK_RIGHT; ++b) {
+			was_any |= g_in.button_prev[b];
+		}
+		if (was_any && mag > 0.35f) {
+			/* Hold the flick until the stick comes back to centre. */
+			for (b = AERON_XR_BUTTON_FLICK_UP; b <= AERON_XR_BUTTON_FLICK_RIGHT; ++b) {
+				now[b] = g_in.button_prev[b];
+			}
+		} else if (mag >= 0.7f) {
+			if (fabsf(x) > fabsf(y)) {
+				now[x > 0.0f ? AERON_XR_BUTTON_FLICK_RIGHT : AERON_XR_BUTTON_FLICK_LEFT] = 1;
+			} else {
+				now[y > 0.0f ? AERON_XR_BUTTON_FLICK_UP : AERON_XR_BUTTON_FLICK_DOWN] = 1;
+			}
+		}
+	}
+	for (b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
+		if (g_xr_flight_buttons && now[b] && !g_in.button_prev[b]) {
+			Aeron_XrQueueButton((AeronXrButton)b, shifted);
+		}
+		g_in.button_prev[b] = now[b];
+	}
+}
+
 static int Aeron_XrFindVirtualSlot(const AeronInputSnapshot* input) {
 	int slot;
 	if (g_in.slot >= 0 && g_aeron.controllers[g_in.slot].joystick == NULL) {
@@ -447,26 +679,15 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	}
 
 	/* Menu button -> Escape (pause / back), edge-triggered. */
-	if (touch.menu && !g_in.menu_previous) {
-		input->key_down[AERON_KEY_ESCAPE]    = 1;
-		input->key_pressed[AERON_KEY_ESCAPE] = 1;
-		input->key_typed[AERON_KEY_ESCAPE]++;
-		if (input->key_event_count < AERON_KEY_EVENT_CAPACITY) {
-			AeronKeyEvent* event = &input->key_events[input->key_event_count++];
-			memset(event, 0, sizeof *event);
-			event->chord.key = AERON_KEY_ESCAPE;
-			event->down      = 1;
-		}
-	} else if (!touch.menu && g_in.menu_previous) {
-		input->key_released[AERON_KEY_ESCAPE] = 1;
-		if (input->key_event_count < AERON_KEY_EVENT_CAPACITY) {
-			AeronKeyEvent* event = &input->key_events[input->key_event_count++];
-			memset(event, 0, sizeof *event);
-			event->chord.key = AERON_KEY_ESCAPE;
-			event->down      = 0;
-		}
+	Aeron_XrKeyFollow(input, AERON_KEY_ESCAPE, touch.menu, &g_in.menu_previous);
+
+	/* Keyboard-only menus and bindable flight buttons. */
+	Aeron_XrTrackFlightButtons(&touch);
+	if (g_xr_menu_keys) {
+		Aeron_XrApplyMenuKeys(input, &touch, dt_seconds);
+	} else {
+		Aeron_XrReleaseMenuKeys(input);
 	}
-	g_in.menu_previous = touch.menu;
 
 	/* Virtual gamepad. */
 	slot = Aeron_XrFindVirtualSlot(input);
@@ -479,7 +700,32 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 			Aeron_LogInfo("aeron.xr", "virtual gamepad 'Meta Quest Touch (OpenXR)' in controller slot %d",
 						  slot);
 		}
-		AeronXrTouchMapper_Map(&g_in.mapper, &touch, dt_seconds, pad);
+		{
+			/* What the game's gamepad bindings get to see. */
+			AeronXrTouchState mapped = touch;
+			if (g_xr_menu_keys) {
+				/* Everything is a key in these menus; keep the throttle lever
+				 * where it is. */
+				memset(mapped.left_stick, 0, sizeof mapped.left_stick);
+				memset(mapped.right_stick, 0, sizeof mapped.right_stick);
+				mapped.left_trigger = mapped.right_trigger = 0.0f;
+				mapped.left_grip = mapped.right_grip = 0.0f;
+				mapped.a = mapped.b = mapped.x = mapped.y = 0;
+				mapped.left_stick_click = mapped.right_stick_click = 0;
+			} else if (g_xr_flight_buttons) {
+				const int shifted = touch.active_left && touch.left_grip >= 0.5f;
+				mapped.a = mapped.b = mapped.x = mapped.y = 0;
+				mapped.left_trigger      = 0.0f;
+				mapped.left_grip         = 0.0f;
+				mapped.left_stick_click  = 0;
+				mapped.right_stick_click = 0;
+				if (shifted) {
+					mapped.right_grip = 0.0f;
+					memset(mapped.right_stick, 0, sizeof mapped.right_stick); /* flicks */
+				}
+			}
+			AeronXrTouchMapper_Map(&g_in.mapper, &mapped, dt_seconds, pad);
+		}
 		pad->instance_id = AERON_XR_CONTROLLER_INSTANCE_ID;
 		pad->has_rumble  = 1;
 		SDL_strlcpy(pad->name, "Meta Quest Touch (OpenXR)", sizeof pad->name);

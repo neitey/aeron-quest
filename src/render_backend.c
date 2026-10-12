@@ -304,6 +304,14 @@ static int Aeron_ApplyOutputHdr(void) {
 }
 
 int Aeron_SetOutputHdr(int enabled) {
+	if (g_aeron.gpu_device && g_aeron.xr_headless && !g_aeron.window_claimed) {
+		/* Headless XR has no desktop swapchain to switch: the headset's
+		 * compositor owns the output format. Accept the request so callers
+		 * don't treat it as a fatal initialization failure. */
+		g_aeron.hdr_output_desired  = enabled != 0;
+		g_aeron.hdr_reapply_pending = 0;
+		return 1;
+	}
 	if (!g_aeron.gpu_device || !g_aeron.window || !g_aeron.window_claimed) {
 		return 0;
 	}

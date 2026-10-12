@@ -53,7 +53,9 @@ VSOut main(uint vid : SV_VertexID)
     eye_ray.z =  1.0f;
 
     VSOut o;
-    o.position  = float4(ndc, 0.0f, 1.0f);
+    /* Far plane, nudged off exactly 0 (reverse-Z clear) for mobile GPUs that
+     * clip or depth-fail z == 0. */
+    o.position  = float4(ndc, 1e-7f, 1.0f);
     o.direction = mul(eye_to_cube, eye_ray);
     return o;
 }

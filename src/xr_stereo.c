@@ -13,6 +13,7 @@
 #include "aeron/log.h"
 #include "internal.h"
 
+#include <math.h>
 #include <string.h>
 
 #if !defined(AERON_HAS_OPENXR)
@@ -23,6 +24,11 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 }
 
 void Aeron_XrStereoCommit(const AeronXrHudQuad* hud) { (void)hud; }
+
+void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* hud_world) {
+	(void)hud;
+	(void)hud_world;
+}
 
 int Aeron_XrStereoCommitted(void) { return 0; }
 
@@ -49,7 +55,12 @@ void Aeron_XrStereoSize(int* w, int* h) {
 
 #include "xr_private.h"
 
-enum { AERON_XR_EYE_COUNT = 2, AERON_XR_STEREO_SLOTS = 3 /* 2 eyes + HUD */ };
+enum {
+	AERON_XR_EYE_COUNT    = 2,
+	AERON_XR_SLOT_HUD     = 2,
+	AERON_XR_SLOT_HUD_WORLD = 3,
+	AERON_XR_STEREO_SLOTS = 4 /* 2 eyes + head HUD + world HUD */
+};
 
 typedef struct AeronXrStereoSwapchain {
 	XrSwapchain        swapchain;
@@ -79,10 +90,16 @@ typedef struct AeronXrStereo {
 	XrView         views[AERON_XR_EYE_COUNT];
 	int            committed;
 	AeronXrHudQuad hud;
+	AeronXrHudQuad hud_world;
+	/* Smoothed head-locked HUD pose (LOCAL space). */
+	int        follow_valid;
+	XrPosef    follow_pose;
+	XrTime     follow_time;
 	/* Layer storage for xrEndFrame (must outlive the call) */
 	XrCompositionLayerProjectionView proj_views[AERON_XR_EYE_COUNT];
 	XrCompositionLayerProjection     projection;
 	XrCompositionLayerQuad           hud_quad;
+	XrCompositionLayerQuad           hud_world_quad;
 } AeronXrStereo;
 
 static AeronXrStereo g_st;
@@ -134,7 +151,7 @@ int Aeron_XrStereoInit(void) {
 
 	for (i = 0; i < AERON_XR_STEREO_SLOTS; ++i) {
 		static const char*    names[AERON_XR_STEREO_SLOTS] = { "aeron.xr.eye_left", "aeron.xr.eye_right",
-															   "aeron.xr.hud" };
+															   "aeron.xr.hud", "aeron.xr.hud_world" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
 		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 		if (g_xr.capture_frame_count > 0) {
@@ -190,7 +207,12 @@ int Aeron_XrStereoInit(void) {
 		}
 	}
 	g_st.ready  = 1;
-	g_st.direct = g_st.chains[0].image_count && g_st.chains[1].image_count && g_st.chains[2].image_count;
+	g_st.direct = 1;
+	for (i = 0; i < AERON_XR_STEREO_SLOTS; ++i) {
+		if (!g_st.chains[i].image_count) {
+			g_st.direct = 0;
+		}
+	}
 	{
 		const char* direct = SDL_getenv("AERON_XR_DIRECT");
 		if (direct && direct[0] == '0') {
@@ -304,23 +326,30 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 		out->views[i].fov[3]         = v->fov.angleDown;
 		out->eye_targets[i]          = Aeron_XrStereoSlotTarget(i);
 	}
-	out->hud_target = Aeron_XrStereoSlotTarget(2);
+	out->hud_target       = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_HUD);
+	out->hud_world_target = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_HUD_WORLD);
 	out->width      = g_st.width;
 	out->height     = g_st.height;
 	out->format     = g_st.format;
 	return 1;
 }
 
-void Aeron_XrStereoCommit(const AeronXrHudQuad* hud) {
+void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* hud_world) {
 	if (!g_st.ready || !g_st.located || g_st.located_frame != g_xr.frame_index) {
 		return;
 	}
 	g_st.committed = 1;
 	memset(&g_st.hud, 0, sizeof g_st.hud);
+	memset(&g_st.hud_world, 0, sizeof g_st.hud_world);
 	if (hud) {
 		g_st.hud = *hud;
 	}
+	if (hud_world) {
+		g_st.hud_world = *hud_world;
+	}
 }
+
+void Aeron_XrStereoCommit(const AeronXrHudQuad* hud) { Aeron_XrStereoCommitHuds(hud, NULL); }
 
 int Aeron_XrStereoCommitted(void) {
 	return g_st.ready && g_st.committed && g_st.located_frame == g_xr.frame_index && Aeron_XrShouldRender();
@@ -334,6 +363,16 @@ SDL_GPUTexture* Aeron_XrStereoTexture(int slot) {
 }
 
 int Aeron_XrStereoHudVisible(void) { return g_st.hud.visible; }
+
+static int Aeron_XrStereoSlotVisible(int slot) {
+	if (slot == AERON_XR_SLOT_HUD) {
+		return g_st.hud.visible;
+	}
+	if (slot == AERON_XR_SLOT_HUD_WORLD) {
+		return g_st.hud_world.visible;
+	}
+	return 1;
+}
 
 void Aeron_XrStereoSize(int* width, int* height) {
 	if (width)
@@ -355,7 +394,7 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 		SDL_GPUBlitInfo             blit;
 		uint32_t                    index = 0;
 		XrResult                    result;
-		if (slot == 2 && !g_st.hud.visible) {
+		if (!Aeron_XrStereoSlotVisible(slot)) {
 			continue;
 		}
 		if (chain->acquired) {
@@ -408,6 +447,113 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 	return ok;
 }
 
+static XrQuaternionf Aeron_XrQuatMul(XrQuaternionf a, XrQuaternionf b) {
+	XrQuaternionf r;
+	r.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+	r.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
+	r.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
+	r.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
+	return r;
+}
+
+static XrVector3f Aeron_XrQuatRotate(XrQuaternionf q, XrVector3f v) {
+	const float tx = 2.0f * (q.y * v.z - q.z * v.y);
+	const float ty = 2.0f * (q.z * v.x - q.x * v.z);
+	const float tz = 2.0f * (q.x * v.y - q.y * v.x);
+	XrVector3f  r;
+	r.x = v.x + q.w * tx + (q.y * tz - q.z * ty);
+	r.y = v.y + q.w * ty + (q.z * tx - q.x * tz);
+	r.z = v.z + q.w * tz + (q.x * ty - q.y * tx);
+	return r;
+}
+
+static XrQuaternionf Aeron_XrQuatNormalize(XrQuaternionf q) {
+	const float len = sqrtf(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+	if (len < 1.0e-6f) {
+		return (XrQuaternionf) { 0.0f, 0.0f, 0.0f, 1.0f };
+	}
+	q.x /= len;
+	q.y /= len;
+	q.z /= len;
+	q.w /= len;
+	return q;
+}
+
+/* Pose of a head-locked quad this frame: head pose (between the eyes) times
+ * the requested offset, eased towards that target when follow_s > 0. */
+static XrPosef Aeron_XrHudFollowPose(const AeronXrHudQuad* hud) {
+	const XrPosef* l = &g_st.views[0].pose;
+	const XrPosef* r = &g_st.views[1].pose;
+	XrPosef        head;
+	XrPosef        target;
+	XrVector3f     offset;
+
+	head.position.x  = 0.5f * (l->position.x + r->position.x);
+	head.position.y  = 0.5f * (l->position.y + r->position.y);
+	head.position.z  = 0.5f * (l->position.z + r->position.z);
+	head.orientation = Aeron_XrQuatNormalize(l->orientation);
+
+	offset             = (XrVector3f) { hud->position[0], hud->position[1], hud->position[2] };
+	target.orientation = head.orientation;
+	target.position    = Aeron_XrQuatRotate(head.orientation, offset);
+	target.position.x += head.position.x;
+	target.position.y += head.position.y;
+	target.position.z += head.position.z;
+
+	if (hud->follow_s <= 0.0f || !g_st.follow_valid || g_xr.predicted_display_time <= g_st.follow_time) {
+		g_st.follow_pose = target;
+	} else {
+		float dt = (float)((double)(g_xr.predicted_display_time - g_st.follow_time) * 1.0e-9);
+		float a;
+		float dot;
+		XrQuaternionf q = target.orientation;
+		if (dt > 0.25f) {
+			dt = 0.25f; /* after a hitch, catch up rather than crawl */
+		}
+		a = 1.0f - expf(-dt / hud->follow_s);
+		g_st.follow_pose.position.x += (target.position.x - g_st.follow_pose.position.x) * a;
+		g_st.follow_pose.position.y += (target.position.y - g_st.follow_pose.position.y) * a;
+		g_st.follow_pose.position.z += (target.position.z - g_st.follow_pose.position.z) * a;
+		dot = g_st.follow_pose.orientation.x * q.x + g_st.follow_pose.orientation.y * q.y +
+			  g_st.follow_pose.orientation.z * q.z + g_st.follow_pose.orientation.w * q.w;
+		if (dot < 0.0f) {
+			q.x = -q.x;
+			q.y = -q.y;
+			q.z = -q.z;
+			q.w = -q.w;
+		}
+		g_st.follow_pose.orientation.x += (q.x - g_st.follow_pose.orientation.x) * a;
+		g_st.follow_pose.orientation.y += (q.y - g_st.follow_pose.orientation.y) * a;
+		g_st.follow_pose.orientation.z += (q.z - g_st.follow_pose.orientation.z) * a;
+		g_st.follow_pose.orientation.w += (q.w - g_st.follow_pose.orientation.w) * a;
+		g_st.follow_pose.orientation = Aeron_XrQuatNormalize(g_st.follow_pose.orientation);
+	}
+	g_st.follow_valid = 1;
+	g_st.follow_time  = g_xr.predicted_display_time;
+	return g_st.follow_pose;
+}
+
+static void Aeron_XrFillQuad(XrCompositionLayerQuad* quad, int slot, const AeronXrHudQuad* hud) {
+	memset(quad, 0, sizeof *quad);
+	quad->type                             = XR_TYPE_COMPOSITION_LAYER_QUAD;
+	quad->layerFlags                       = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+	quad->space                            = g_xr.local_space;
+	quad->eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
+	quad->subImage.swapchain               = g_st.chains[slot].swapchain;
+	quad->subImage.imageRect.extent.width  = g_st.width;
+	quad->subImage.imageRect.extent.height = g_st.height;
+	if (hud->head_locked) {
+		quad->pose = Aeron_XrHudFollowPose(hud);
+	} else {
+		quad->pose.orientation.w = 1.0f;
+		quad->pose.position.x    = hud->position[0];
+		quad->pose.position.y    = hud->position[1];
+		quad->pose.position.z    = hud->position[2];
+	}
+	quad->size.width  = hud->size[0];
+	quad->size.height = hud->size[1];
+}
+
 /* Releases acquired images and appends this frame's layers. Returns the
  * number of layers written (0 when the frame was not stereo). */
 uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity) {
@@ -453,24 +599,17 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 	g_st.projection.views     = g_st.proj_views;
 	layers[count++]           = (const XrCompositionLayerBaseHeader*)&g_st.projection;
 
-	if (g_st.hud.visible && g_st.chains[2].released_once) {
-		memset(&g_st.hud_quad, 0, sizeof g_st.hud_quad);
-		g_st.hud_quad.type                             = XR_TYPE_COMPOSITION_LAYER_QUAD;
-		g_st.hud_quad.layerFlags                       = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-		g_st.hud_quad.space                            = g_xr.local_space;
-		g_st.hud_quad.eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
-		g_st.hud_quad.subImage.swapchain               = g_st.chains[2].swapchain;
-		g_st.hud_quad.subImage.imageRect.extent.width  = g_st.width;
-		g_st.hud_quad.subImage.imageRect.extent.height = g_st.height;
-		g_st.hud_quad.pose.orientation.w               = 1.0f;
-		g_st.hud_quad.pose.position.x                  = g_st.hud.position[0];
-		g_st.hud_quad.pose.position.y                  = g_st.hud.position[1];
-		g_st.hud_quad.pose.position.z                  = g_st.hud.position[2];
-		g_st.hud_quad.size.width                       = g_st.hud.size[0];
-		g_st.hud_quad.size.height                      = g_st.hud.size[1];
-		if (count < capacity) {
-			layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.hud_quad;
-		}
+	/* World HUD first: the head HUD is composited on top of it. */
+	if (g_st.hud_world.visible && g_st.chains[AERON_XR_SLOT_HUD_WORLD].released_once && count < capacity) {
+		Aeron_XrFillQuad(&g_st.hud_world_quad, AERON_XR_SLOT_HUD_WORLD, &g_st.hud_world);
+		layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.hud_world_quad;
+	}
+	if (g_st.hud.visible && g_st.chains[AERON_XR_SLOT_HUD].released_once && count < capacity) {
+		Aeron_XrFillQuad(&g_st.hud_quad, AERON_XR_SLOT_HUD, &g_st.hud);
+		layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.hud_quad;
+	}
+	if (!g_st.hud.visible || !g_st.hud.head_locked) {
+		g_st.follow_valid = 0; /* next appearance starts in place, no swoop */
 	}
 	return count;
 }

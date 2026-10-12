@@ -648,7 +648,7 @@ static void Aeron_XrFinishCapture(SDL_GPUFence* fence) {
 int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	XrSwapchainImageReleaseInfo         release_info = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, NULL };
 	XrCompositionLayerQuad              quad         = { XR_TYPE_COMPOSITION_LAYER_QUAD, NULL };
-	const XrCompositionLayerBaseHeader* layers[3];
+	const XrCompositionLayerBaseHeader* layers[4];
 	XrFrameEndInfo                      end_info = { XR_TYPE_FRAME_END_INFO, NULL };
 	XrResult                            result;
 	uint32_t                            stereo_layers;
@@ -676,7 +676,7 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 	end_info.layerCount           = 0;
 	end_info.layers               = layers;
-	stereo_layers                 = g_xr.should_render ? Aeron_XrStereoEndFrameLayers(layers, 3) : 0;
+	stereo_layers                 = g_xr.should_render ? Aeron_XrStereoEndFrameLayers(layers, 4) : 0;
 	if (!g_xr.should_render) {
 		Aeron_XrStereoEndFrameLayers(layers, 0); /* release anything acquired */
 	}

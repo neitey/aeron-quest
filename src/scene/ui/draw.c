@@ -174,3 +174,36 @@ float ui_text_width(const AeronUiContext* ctx, const AeronFontAtlas* font, float
 	}
 	return AeronText_MeasureWidth(&style, text, len);
 }
+
+void AeronUi_DrawPointer(AeronUiContext* ctx, float radius_ref) {
+	AeronDrawList2DRRect r = { 0 };
+	static const AeronUiColor fill   = { 1.0f, 0.86f, 0.25f, 0.95f };
+	static const AeronUiColor border = { 0.10f, 0.08f, 0.02f, 0.90f };
+	float                     radius;
+
+	if (!ctx || !ctx->frame_active || ctx->offline || !ctx->mouse_present) {
+		return;
+	}
+	radius      = fmaxf(2.0f, ui_ref(ctx, radius_ref > 0.0f ? radius_ref : 9.0f));
+	r.dst_x     = ctx->mouse_x - radius;
+	r.dst_y     = ctx->mouse_y - radius;
+	r.dst_w     = radius * 2.0f;
+	r.dst_h     = radius * 2.0f;
+	r.radius_px = radius;
+	r.soft_px   = 1.0f;
+	r.border_px = fmaxf(1.0f, radius * 0.25f);
+	{
+		/* Not faded with the window: the pointer must stay visible. */
+		const float a = fill[3];
+		r.fill_top[0] = fill[0] * a;
+		r.fill_top[1] = fill[1] * a;
+		r.fill_top[2] = fill[2] * a;
+		r.fill_top[3] = a;
+	}
+	memcpy(r.fill_bottom, r.fill_top, sizeof r.fill_bottom);
+	r.border[0] = border[0] * border[3];
+	r.border[1] = border[1] * border[3];
+	r.border[2] = border[2] * border[3];
+	r.border[3] = border[3];
+	AeronDrawList_AddRRect(ctx->list, &r);
+}

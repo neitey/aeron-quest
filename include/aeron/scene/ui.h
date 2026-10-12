@@ -240,6 +240,13 @@ void AeronUi_EndModal(AeronUiContext* ctx);
 void AeronUi_PushId(AeronUiContext* ctx, int id);
 void AeronUi_PopId(AeronUiContext* ctx);
 
+/* Draws a pointer dot at the mouse position on top of everything this
+ * frame has drawn so far (call last, before AeronUi_EndFrame). For laser
+ * pointer input in VR, where the game's own cursor may render underneath an
+ * overlay. `radius_ref` is in reference pixels; nothing is drawn while the
+ * mouse is outside the content area. */
+void AeronUi_DrawPointer(AeronUiContext* ctx, float radius_ref);
+
 /* ============================== widgets ============================== */
 /* Labels use "Text##suffix" to separate display text from identity.
  * Value widgets return nonzero the frame the value changed. */

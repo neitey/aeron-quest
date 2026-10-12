@@ -74,6 +74,43 @@ int Aeron_XrIsUnfocused(void);
  * (trigger = left click, grip = right click). Disable during flight so the
  * trigger fires instead. Enabled by default. */
 void Aeron_XrSetPointerEnabled(int enabled);
+/* Menus that are driven by the keyboard only (e.g. a game's in-cockpit
+ * launch menu): while enabled, either thumbstick sends the arrow keys (with
+ * key repeat), A or the right trigger sends Enter, X sends Space and B sends
+ * Escape, and the virtual gamepad reports neutral sticks and no buttons.
+ * Disabled by default. */
+void Aeron_XrSetMenuKeys(int enabled);
+
+/* Controller buttons a game can bind to its own actions in flight. */
+typedef enum AeronXrButton {
+	AERON_XR_BUTTON_A = 0,
+	AERON_XR_BUTTON_B,
+	AERON_XR_BUTTON_X,
+	AERON_XR_BUTTON_Y,
+	AERON_XR_BUTTON_LEFT_TRIGGER,
+	AERON_XR_BUTTON_LEFT_STICK,  /* left thumbstick click */
+	AERON_XR_BUTTON_RIGHT_STICK, /* right thumbstick click */
+	AERON_XR_BUTTON_RIGHT_GRIP,
+	AERON_XR_BUTTON_FLICK_UP, /* right thumbstick flicks, only while shifted */
+	AERON_XR_BUTTON_FLICK_DOWN,
+	AERON_XR_BUTTON_FLICK_LEFT,
+	AERON_XR_BUTTON_FLICK_RIGHT,
+	AERON_XR_BUTTON_COUNT
+} AeronXrButton;
+
+/* Flight buttons: while enabled, presses of the buttons above are queued
+ * for Aeron_XrPollButton instead of being reported on the virtual gamepad
+ * (the right trigger, right stick, left stick and throttle lever stay on
+ * the gamepad, and so does the right grip unless shifted). Holding the left
+ * grip is the shift layer: presses made while it is held report
+ * `shifted`, and the right thumbstick turns into four flick buttons instead
+ * of steering. Disabled by default. */
+void Aeron_XrSetFlightButtons(int enabled);
+/* Pops the oldest queued flight-button press. Returns 0 when none is
+ * queued. */
+int Aeron_XrPollButton(AeronXrButton* button, int* shifted);
+/* Nonzero when frames are also shown in a desktop window (not headless). */
+int Aeron_HasDesktopMirror(void);
 /* Shuts down Aeron and releases all runtime-owned resources. */
 void Aeron_Shutdown(void);
 

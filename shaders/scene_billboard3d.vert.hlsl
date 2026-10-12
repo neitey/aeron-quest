@@ -56,7 +56,7 @@ VSOut main(VSIn i)
      * Camera-facing sprites share one eye_z across their corners, so
      * the branch is uniform per sprite. */
     if (params.x != 0.0f)
-        o.pos.z = 0.0f;
+        o.pos.z = 1e-7f * o.pos.w; /* far plane; exactly 0 is clipped on some mobile GPUs */
     else if (cc.w - i.bias > 0.001f)
         o.pos.z = cc.z * cc.w / (cc.w - i.bias);
     o.uv    = i.uv;
