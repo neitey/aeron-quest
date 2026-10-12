@@ -650,6 +650,21 @@ static void Aeron_XrFinishCapture(SDL_GPUFence* fence) {
 	g_capture_count = 0;
 }
 
+/* The virtual screen as a world-locked quad in LOCAL space. */
+static void Aeron_XrFillScreenQuad(XrCompositionLayerQuad* quad) {
+	const float aspect                     = (float)g_xr.screen_height / (float)g_xr.screen_width;
+	quad->space                            = g_xr.local_space;
+	quad->eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
+	quad->subImage.swapchain               = g_xr.screen_swapchain;
+	quad->subImage.imageRect.extent.width  = g_xr.screen_width;
+	quad->subImage.imageRect.extent.height = g_xr.screen_height;
+	quad->pose.orientation.w               = 1.0f;
+	quad->pose.position.y                  = g_xr.screen_height_offset_m;
+	quad->pose.position.z                  = -g_xr.screen_distance_m;
+	quad->size.width                       = g_xr.screen_width_m;
+	quad->size.height                      = g_xr.screen_width_m * aspect;
+}
+
 int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	XrSwapchainImageReleaseInfo         release_info = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, NULL };
 	XrCompositionLayerQuad              quad         = { XR_TYPE_COMPOSITION_LAYER_QUAD, NULL };
@@ -657,6 +672,7 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	XrFrameEndInfo                      end_info = { XR_TYPE_FRAME_END_INFO, NULL };
 	XrResult                            result;
 	uint32_t                            stereo_layers;
+	int                                 screen_overlay;
 
 	if (g_xr.capture_pending) {
 		Aeron_XrFinishCapture(submitted_fence);
@@ -681,6 +697,7 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 	end_info.layerCount           = 0;
 	end_info.layers               = layers;
+	screen_overlay                = g_xr.should_render && Aeron_XrStereoScreenOverlay();
 	stereo_layers                 = g_xr.should_render ? Aeron_XrStereoEndFrameLayers(
 															 layers, g_xr.max_layers < AERON_XR_MAX_LAYERS ? g_xr.max_layers : AERON_XR_MAX_LAYERS) : 0;
 	if (!g_xr.should_render) {
@@ -688,18 +705,14 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	}
 	if (stereo_layers > 0) {
 		end_info.layerCount = stereo_layers;
+		/* Backdrop frame: the virtual screen on top of the environment. */
+		if (screen_overlay && g_xr.screen_has_released_image &&
+			stereo_layers < (g_xr.max_layers < AERON_XR_MAX_LAYERS ? g_xr.max_layers : AERON_XR_MAX_LAYERS)) {
+			Aeron_XrFillScreenQuad(&quad);
+			layers[end_info.layerCount++] = (const XrCompositionLayerBaseHeader*)&quad;
+		}
 	} else if (g_xr.should_render && g_xr.screen_has_released_image) {
-		const float aspect                    = (float)g_xr.screen_height / (float)g_xr.screen_width;
-		quad.space                            = g_xr.local_space;
-		quad.eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
-		quad.subImage.swapchain               = g_xr.screen_swapchain;
-		quad.subImage.imageRect.extent.width  = g_xr.screen_width;
-		quad.subImage.imageRect.extent.height = g_xr.screen_height;
-		quad.pose.orientation.w               = 1.0f;
-		quad.pose.position.y                  = g_xr.screen_height_offset_m;
-		quad.pose.position.z                  = -g_xr.screen_distance_m;
-		quad.size.width                       = g_xr.screen_width_m;
-		quad.size.height                      = g_xr.screen_width_m * aspect;
+		Aeron_XrFillScreenQuad(&quad);
 		layers[0]                             = (const XrCompositionLayerBaseHeader*)&quad;
 		end_info.layerCount                   = 1;
 	}

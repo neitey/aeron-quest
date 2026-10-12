@@ -77,6 +77,9 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence);
 
 /* Stereo (xr_stereo.c): set by the game through aeron/xr.h. */
 int             Aeron_XrStereoCommitted(void);
+/* Committed with Aeron_XrStereoCommitBackdrop: the virtual screen is
+ * composed as usual and shown over the eyes. */
+int             Aeron_XrStereoScreenOverlay(void);
 int             Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer);
 SDL_GPUTexture* Aeron_XrStereoTexture(int slot); /* 0 left, 1 right, 2 HUD */
 int             Aeron_XrStereoHudVisible(void);

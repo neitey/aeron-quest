@@ -102,6 +102,11 @@ void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPa
  * console_target pixels; all-zero rect = the whole target), on top of the
  * other layers. */
 void Aeron_XrStereoCommitConsole(const AeronXrPanel* console);
+/* The eye targets are a 3D environment around the flat virtual screen:
+ * Aeron_Present submits the eyes as the projection layer and the composed
+ * 2D layers on the virtual screen quad on top (menus in a VR room). The
+ * mouse pointer keeps working on the screen. */
+void Aeron_XrStereoCommitBackdrop(void);
 
 #ifdef __cplusplus
 }

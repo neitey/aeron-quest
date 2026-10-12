@@ -40,6 +40,10 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) { (void)console; }
 
 int Aeron_XrStereoCommitted(void) { return 0; }
 
+void Aeron_XrStereoCommitBackdrop(void) {}
+
+int Aeron_XrStereoScreenOverlay(void) { return 0; }
+
 int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* c) {
 	(void)c;
 	return 0;
@@ -106,6 +110,7 @@ typedef struct AeronXrStereo {
 	int            located;
 	XrView         views[AERON_XR_EYE_COUNT];
 	int            committed;
+	int            screen_overlay; /* committed as a backdrop to the virtual screen */
 	AeronXrHudQuad hud;
 	AeronXrHudQuad hud_world;
 	/* Smoothed head-locked HUD pose (LOCAL space). */
@@ -381,6 +386,7 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
 		return;
 	}
 	g_st.committed       = 1;
+	g_st.screen_overlay  = 0;
 	g_st.panel_count     = 0;
 	g_st.console_visible = 0;
 	g_st.hud_aux_visible = 0;
@@ -460,6 +466,13 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) {
 int Aeron_XrStereoCommitted(void) {
 	return g_st.ready && g_st.committed && g_st.located_frame == g_xr.frame_index && Aeron_XrShouldRender();
 }
+
+void Aeron_XrStereoCommitBackdrop(void) {
+	Aeron_XrStereoCommitHuds(NULL, NULL);
+	g_st.screen_overlay = g_st.committed;
+}
+
+int Aeron_XrStereoScreenOverlay(void) { return Aeron_XrStereoCommitted() && g_st.screen_overlay; }
 
 SDL_GPUTexture* Aeron_XrStereoTexture(int slot) {
 	if (slot < 0 || slot >= AERON_XR_STEREO_SLOTS || !g_st.chains[slot].target) {
@@ -677,10 +690,12 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		}
 	}
 	if (!Aeron_XrStereoCommitted()) {
-		g_st.committed = 0;
+		g_st.committed      = 0;
+		g_st.screen_overlay = 0;
 		return 0;
 	}
-	g_st.committed = 0;
+	g_st.committed      = 0;
+	g_st.screen_overlay = 0;
 	eyes_ok        = g_st.chains[0].released_once && g_st.chains[1].released_once;
 	if (!eyes_ok || capacity < 2) {
 		return 0;

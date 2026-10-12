@@ -1925,7 +1925,17 @@ int Aeron_Present(void) {
 			 * them into the XR swapchains; the desktop window keeps showing
 			 * the ordinary composed layers whenever an image is free. */
 			present_ok = 1;
-			if (g_aeron.window_claimed &&
+			if (Aeron_XrStereoScreenOverlay()) {
+				/* Backdrop frame: the 2D layers still go to the virtual
+				 * screen, shown over the eyes. */
+				present_ok = Aeron_ComposeLayers(command_buffer, Aeron_XrScreenTexture(), (Uint32)screen_w,
+												 (Uint32)screen_h, Aeron_XrScreenFormat(), 1.0f, 0.0f, 0,
+												 "XR virtual screen");
+				if (present_ok) {
+					Aeron_XrCopyScreenToSwapchain(command_buffer);
+				}
+			}
+			if (present_ok && g_aeron.window_claimed &&
 				SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &mirror, &mirror_w,
 											   &mirror_h) &&
 				mirror) {
