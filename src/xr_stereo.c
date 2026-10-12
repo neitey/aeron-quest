@@ -136,9 +136,11 @@ int Aeron_XrStereoInit(void) {
 		static const char*    names[AERON_XR_STEREO_SLOTS] = { "aeron.xr.eye_left", "aeron.xr.eye_right",
 															   "aeron.xr.hud" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
-		/* TRANSFER_SRC lets AERON_XR_CAPTURE read images rendered in place. */
-		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT |
-						  XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+		if (g_xr.capture_frame_count > 0) {
+			/* Lets AERON_XR_CAPTURE read images rendered in place. */
+			info.usageFlags |= XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+		}
 		info.sampleCount = 1;
 		info.width       = (uint32_t)g_st.width;
 		info.height      = (uint32_t)g_st.height;
@@ -275,11 +277,14 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 			}
 			chain->acquired   = 1;
 			wait_info.timeout = XR_INFINITE_DURATION;
-			if (index < chain->image_count &&
-				XR_SUCCEEDED(g_xr.xrWaitSwapchainImage(chain->swapchain, &wait_info))) {
-				chain->index        = index;
-				chain->direct_frame = g_xr.frame_index;
-				chain->waited       = 1;
+			/* Always wait: releasing an acquired image that was never waited
+			 * on is a call-order error that would wedge the swapchain. */
+			if (XR_SUCCEEDED(g_xr.xrWaitSwapchainImage(chain->swapchain, &wait_info))) {
+				chain->index  = index;
+				chain->waited = 1;
+				if (index < chain->image_count) {
+					chain->direct_frame = g_xr.frame_index;
+				}
 			}
 		}
 	}

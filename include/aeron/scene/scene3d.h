@@ -288,6 +288,10 @@ int AeronScene_SetCamera(AeronScene3D* scene, const AeronSceneCamera* camera);
  * shadow atlas built for the first view this frame (nearby stereo eyes).
  * Pass 0 to rebuild shadows for every view. */
 void AeronScene_SetShadowReuse(AeronScene3D* scene, int enabled);
+/* Fits the directional-shadow cascades to `camera` instead of the render
+ * camera for this frame (cleared by AeronScene_Begin; NULL clears). Stereo
+ * passes a camera covering both eyes so the shared atlas fits both views. */
+void AeronScene_SetShadowFitCamera(AeronScene3D* scene, const AeronSceneCamera* camera);
 /* Precreate mesh/billboard pipelines and enabled post resources after Begin,
  * outside render passes. Intended for loading screens; draws no geometry. */
 int AeronScene_PrepareResources(AeronScene3D* scene, AeronCullMode mesh_cull);

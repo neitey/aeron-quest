@@ -380,12 +380,16 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 	k->bytes_per_block  = bytes_per_block;
 	k->levels           = levels;
 	k->level_owned      = level_owned;
-	if (block_compressed && bc_fallback_wanted(fmt) && !bc_fallback_decode(k, path)) {
-		ktx2_log("[ktx2] %s: BC fallback decode failed (out of memory)", path);
-		if (status)
-			*status = KTX2_OPEN_RESOURCE_FAILURE;
-		ktx2_close(k);
-		return NULL;
+	if (block_compressed && bc_fallback_wanted(fmt)) {
+		const int decoded = bc_fallback_decode(k, path);
+		if (decoded <= 0) {
+			if (decoded == 0)
+				ktx2_log("[ktx2] %s: BC fallback decode failed (out of memory)", path);
+			if (status)
+				*status = decoded == 0 ? KTX2_OPEN_RESOURCE_FAILURE : KTX2_OPEN_INVALID_DATA;
+			ktx2_close(k);
+			return NULL;
+		}
 	}
 	if (status)
 		*status = KTX2_OPEN_SUCCESS;
@@ -494,8 +498,9 @@ static void bc_decode_face(AeronTextureFormat fmt, const uint8_t* src, int w, in
 	}
 }
 
-/* Replaces the levels of a BC-compressed `k` with decoded data. Returns 0
- * on allocation failure (k is left unchanged). */
+/* Replaces the levels of a BC-compressed `k` with decoded data. Returns 1
+ * on success, 0 on allocation failure, -1 when a level holds fewer bytes
+ * than its size needs (k is left unchanged on failure). */
 static int bc_fallback_decode(Ktx2* k, const char* path) {
 	AeronTextureFormat out_fmt;
 	int                out_bpp = 4;
@@ -513,6 +518,18 @@ static int bc_fallback_decode(Ktx2* k, const char* path) {
 		default:
 			out_fmt = AERON_TEXTURE_FORMAT_RGBA8_UNORM;
 			break;
+	}
+	{
+		const size_t bpb = (size_t)k->bytes_per_block;
+		for (int i = 0; i < k->level_count; i++) {
+			const Ktx2Level lv   = k->levels[i];
+			const size_t    need = (size_t)((lv.width + 3) / 4) * (size_t)((lv.height + 3) / 4) * bpb *
+								(size_t)k->face_count;
+			if (bpb == 0 || lv.size < need) {
+				ktx2_log("[ktx2] %s: level %d holds %zu bytes, %zu needed", path, i, lv.size, need);
+				return -1;
+			}
+		}
 	}
 	const int max_size = bc_fallback_max_size();
 	int       first    = 0;

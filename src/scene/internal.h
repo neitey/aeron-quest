@@ -344,6 +344,8 @@ struct AeronScene3D {
 	 * directional-shadow atlas instead of fitting and drawing it again. */
 	int                    shadow_reuse;
 	int                    shadow_reuse_disabled;
+	AeronSceneCamera       shadow_fit_camera;
+	int                    shadow_fit_camera_valid;
 	int                    post_ssao_tried;
 	int                    post_mb_tried;
 	AeronShader*           fullscreen_vs;       /* scene_fullscreen_quad.vert, shared */

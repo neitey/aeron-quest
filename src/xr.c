@@ -355,11 +355,11 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 		}
 	}
 
+	Aeron_XrParseCapture(); /* before stereo init: capture changes swapchain usage */
 	Aeron_XrStereoInit();
 	if (!Aeron_XrInputInit()) {
 		Aeron_LogWarn("aeron.xr", "controller input unavailable; keyboard/mouse/joystick still work");
 	}
-	Aeron_XrParseCapture();
 	g_xr.state = XR_SESSION_STATE_UNKNOWN;
 	Aeron_LogInfo("aeron.xr", "virtual screen %dx%d format %d at %.2f m, %.2f m wide", g_xr.screen_width,
 				  g_xr.screen_height, (int)g_xr.screen_format, g_xr.screen_distance_m, g_xr.screen_width_m);

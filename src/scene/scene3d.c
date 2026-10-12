@@ -402,8 +402,9 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	 * camera; the motion-blur camera fill uses it to skip itself when the
 	 * camera barely rotated (its output would be sub-pixel). */
 	memcpy(s->mb_prev_ori, s->camera.ori, sizeof s->mb_prev_ori);
-	s->shadow_reuse  = 0;
-	s->output_camera = *camera;
+	s->shadow_reuse            = 0;
+	s->shadow_fit_camera_valid = 0;
+	s->output_camera           = *camera;
 	if (s->output_camera.viewport.width <= 0 || s->output_camera.viewport.height <= 0) {
 		s->output_camera.viewport = (AeronRectI) { 0, 0, s->output_w, s->output_h };
 	}
@@ -495,6 +496,16 @@ int AeronScene_SetCamera(AeronScene3D* s, const AeronSceneCamera* camera) {
 	 * lookups are in world space, so the atlas is reused unless disabled. */
 	s->shadow_reuse = !s->shadow_reuse_disabled;
 	return 1;
+}
+
+void AeronScene_SetShadowFitCamera(AeronScene3D* s, const AeronSceneCamera* camera) {
+	if (!s) {
+		return;
+	}
+	s->shadow_fit_camera_valid = camera != NULL;
+	if (camera) {
+		s->shadow_fit_camera = *camera;
+	}
 }
 
 void AeronScene_SetShadowReuse(AeronScene3D* s, int enabled) {
@@ -1390,8 +1401,19 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	if (s->shadow_reuse) {
 		s->shadow_reuse = 0;
-	} else if (!AeronSceneDirectionalShadow_Prepare(s) || !AeronSceneDirectionalShadow_Render(s, cmd)) {
-		return scene_render_failure(s, cmd, "Scene directional-shadow preparation failed");
+	} else {
+		/* Cascades fit the shadow-fit camera when one is set (stereo: both
+		 * eyes), the render camera otherwise. */
+		const AeronSceneCamera render_camera = s->camera;
+		if (s->shadow_fit_camera_valid) {
+			s->camera          = s->shadow_fit_camera;
+			s->camera.viewport = render_camera.viewport;
+		}
+		const int shadows_ok = AeronSceneDirectionalShadow_Prepare(s) && AeronSceneDirectionalShadow_Render(s, cmd);
+		s->camera            = render_camera;
+		if (!shadows_ok) {
+			return scene_render_failure(s, cmd, "Scene directional-shadow preparation failed");
+		}
 	}
 
 	const int temporal_requested = s->temporal_active_mode != AERON_TEMPORAL_OFF;
