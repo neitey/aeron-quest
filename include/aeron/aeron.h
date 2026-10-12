@@ -116,6 +116,11 @@ typedef struct AeronXrHand {
 	float orientation[4]; /* quaternion x, y, z, w; the aim ray is -Z */
 	float trigger;        /* 0..1 */
 	float grip;           /* 0..1 */
+	/* Capacitive touch where the controller has it: 1 touching, 0 not,
+	 * -1 unknown. index_touch = finger on the trigger, thumb_touch = thumb
+	 * on a button, the stick or the thumb rest. */
+	int index_touch;
+	int thumb_touch;
 } AeronXrHand;
 /* Fills `out` for hand 0 (left) or 1 (right) at this frame's predicted
  * display time. Returns out->valid. */
