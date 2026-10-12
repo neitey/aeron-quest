@@ -1426,6 +1426,13 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	}
 	const int msaa_active    = s->sample_count != AERON_SAMPLE_COUNT_1;
 	const int prepass_active = ssao_active || mb_active || s->temporal_active || msaa_active;
+	/* With MSAA the forward pass clears its own depth, so the 1x depth +
+	 * normal prepass only matters for its consumers: SSAO, motion blur,
+	 * temporal upscaling and lens-flare occlusion. Skipping it saves a full
+	 * geometry pass (per eye in VR) and its render-target traffic, which is
+	 * expensive on tile-based mobile GPUs. */
+	const int depth_prepass_needed = ssao_active || mb_active || s->temporal_active ||
+									 (s->bb_count > 0 && s->bb_frame_has_lens) || !msaa_active;
 	const int mb_regen       = mb_active && s->mb_velocity_regen;
 	const int velocity_write = mb_regen || s->temporal_active;
 	if (mb_regen) {
@@ -1437,6 +1444,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 
 	AeronRenderPass* pass = NULL;
 	if (prepass_active) {
+		if (depth_prepass_needed) {
 		/* ---- Pre-pass: normal (+ velocity when needed) + depth. FSR writes
 		 * current vectors every presentation frame; non-temporal blur retains
 		 * velocity_rt when the game pose is repeated. */
@@ -1511,6 +1519,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			}
 		}
 		Aeron_EndRenderPass(pre);
+		}
 
 		if (ssao_active) {
 			Aeron_GpuDebugPush(cmd, "SSAO");
