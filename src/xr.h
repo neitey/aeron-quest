@@ -43,6 +43,8 @@ int  Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 void Aeron_XrShutdown(void);
 
 /* Nonzero once a session exists (it may still be waiting for READY). */
+/* Session exists and is FOCUSED (headset worn, no system overlay). */
+int Aeron_XrFocused(void);
 int Aeron_XrActive(void);
 /* Nonzero while the session is running and frames are being submitted. */
 int Aeron_XrSessionRunning(void);

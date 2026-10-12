@@ -402,6 +402,7 @@ int AeronScene_Begin(AeronScene3D* s, const AeronSceneCamera* camera) {
 	 * camera; the motion-blur camera fill uses it to skip itself when the
 	 * camera barely rotated (its output would be sub-pixel). */
 	memcpy(s->mb_prev_ori, s->camera.ori, sizeof s->mb_prev_ori);
+	s->shadow_reuse  = 0;
 	s->output_camera = *camera;
 	if (s->output_camera.viewport.width <= 0 || s->output_camera.viewport.height <= 0) {
 		s->output_camera.viewport = (AeronRectI) { 0, 0, s->output_w, s->output_h };
@@ -489,7 +490,17 @@ int AeronScene_SetCamera(AeronScene3D* s, const AeronSceneCamera* camera) {
 	s->cluster_ready         = 0;
 	s->scene_rt_out          = s->color_rt;
 	s->scene_rt_out_borrowed = 0;
+	/* The second eye sits a few centimetres from the first: the cascades
+	 * fitted for it still cover everything this view sees, and shadow
+	 * lookups are in world space, so the atlas is reused unless disabled. */
+	s->shadow_reuse = !s->shadow_reuse_disabled;
 	return 1;
+}
+
+void AeronScene_SetShadowReuse(AeronScene3D* s, int enabled) {
+	if (s) {
+		s->shadow_reuse_disabled = !enabled;
+	}
 }
 
 void AeronScene_AddMeshInstance(AeronScene3D* s, const AeronSceneMeshInstance* instance) {
@@ -1377,7 +1388,9 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (s->overlay_vertex_count > 0 && !AeronSceneMeshOverlay_Prepare(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene mesh-overlay preparation failed");
 	}
-	if (!AeronSceneDirectionalShadow_Prepare(s) || !AeronSceneDirectionalShadow_Render(s, cmd)) {
+	if (s->shadow_reuse) {
+		s->shadow_reuse = 0;
+	} else if (!AeronSceneDirectionalShadow_Prepare(s) || !AeronSceneDirectionalShadow_Render(s, cmd)) {
 		return scene_render_failure(s, cmd, "Scene directional-shadow preparation failed");
 	}
 

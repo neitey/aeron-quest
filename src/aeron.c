@@ -149,3 +149,5 @@ int Aeron_FatalErrorRequested(void) { return g_aeron.fatal_error_requested; }
 AeronVfs* Aeron_GetVfs(void) { return &g_aeron.vfs; }
 
 int Aeron_XrIsPresenting(void) { return Aeron_XrSessionRunning(); }
+
+int Aeron_XrIsUnfocused(void) { return Aeron_XrActive() && !Aeron_XrFocused(); }

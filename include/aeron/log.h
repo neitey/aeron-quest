@@ -42,6 +42,13 @@ void Aeron_LogCritical(const char* category, const char* fmt, ...);
 /* Shows a modal fatal-error message box attached to the Aeron window when available. */
 void Aeron_FatalError(const char* title, const char* message);
 
+/* Replaces the fatal-error message box, e.g. with an in-game screen where OS
+ * dialogs cannot be seen (immersive VR). NULL restores the message box. The
+ * handler is not re-entered: a fatal error raised while it runs falls back to
+ * the message box. */
+typedef void (*AeronFatalErrorHandler)(const char* title, const char* message);
+void Aeron_SetFatalErrorHandler(AeronFatalErrorHandler handler);
+
 #ifdef __cplusplus
 }
 #endif

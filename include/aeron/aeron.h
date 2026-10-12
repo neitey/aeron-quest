@@ -67,6 +67,9 @@ typedef struct AeronConfig {
 int Aeron_Init(const AeronConfig* config);
 /* Nonzero while an OpenXR session is presenting frames. */
 int Aeron_XrIsPresenting(void);
+/* Nonzero while an OpenXR session exists but does not have input focus:
+ * headset taken off, system menu or guardian open. Games should pause. */
+int Aeron_XrIsUnfocused(void);
 /* Menus: the right VR controller points at the virtual screen as a mouse
  * (trigger = left click, grip = right click). Disable during flight so the
  * trigger fires instead. Enabled by default. */

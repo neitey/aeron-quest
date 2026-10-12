@@ -284,6 +284,10 @@ int AeronScene_Begin(AeronScene3D* scene, const AeronSceneCamera* camera);
  * AeronScene_Render can run again for another eye. Use with temporal modes
  * and motion blur disabled. */
 int AeronScene_SetCamera(AeronScene3D* scene, const AeronSceneCamera* camera);
+/* By default the render after AeronScene_SetCamera reuses the directional
+ * shadow atlas built for the first view this frame (nearby stereo eyes).
+ * Pass 0 to rebuild shadows for every view. */
+void AeronScene_SetShadowReuse(AeronScene3D* scene, int enabled);
 /* Precreate mesh/billboard pipelines and enabled post resources after Begin,
  * outside render passes. Intended for loading screens; draws no geometry. */
 int AeronScene_PrepareResources(AeronScene3D* scene, AeronCullMode mesh_cull);

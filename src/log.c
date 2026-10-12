@@ -135,7 +135,18 @@ void Aeron_LogCritical(const char* category, const char* fmt, ...) {
 	va_end(args);
 }
 
+static AeronFatalErrorHandler g_fatal_error_handler;
+static int                    g_fatal_error_handler_active;
+
+void Aeron_SetFatalErrorHandler(AeronFatalErrorHandler handler) { g_fatal_error_handler = handler; }
+
 void Aeron_FatalError(const char* title, const char* message) {
+	if (g_fatal_error_handler && !g_fatal_error_handler_active) {
+		g_fatal_error_handler_active = 1;
+		g_fatal_error_handler(title ? title : "Aeron", message ? message : "Fatal error");
+		g_fatal_error_handler_active = 0;
+		return;
+	}
 	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title ? title : "Aeron", message ? message : "Fatal error",
 							 g_aeron.window);
 }

@@ -54,6 +54,8 @@ void Aeron_XrShutdown(void) {}
 
 int Aeron_XrActive(void) { return 0; }
 
+int Aeron_XrFocused(void) { return 0; }
+
 int Aeron_XrSessionRunning(void) { return 0; }
 
 int Aeron_XrPollEvents(void) { return 1; }
@@ -393,6 +395,8 @@ void Aeron_XrShutdown(void) {
 }
 
 int Aeron_XrActive(void) { return g_xr.session != XR_NULL_HANDLE; }
+
+int Aeron_XrFocused(void) { return g_xr.session != XR_NULL_HANDLE && g_xr.state == XR_SESSION_STATE_FOCUSED; }
 
 int Aeron_XrSessionRunning(void) { return g_xr.session != XR_NULL_HANDLE && g_xr.session_running; }
 

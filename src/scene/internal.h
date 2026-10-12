@@ -340,6 +340,10 @@ struct AeronScene3D {
 	int                    mb_velocity_valid;
 	AeronRenderTarget*     scene_rt_out; /* color_rt or mb_rt after Render */
 	int                    scene_rt_out_borrowed;
+	/* Set by AeronScene_SetCamera: the next render reuses this frame's
+	 * directional-shadow atlas instead of fitting and drawing it again. */
+	int                    shadow_reuse;
+	int                    shadow_reuse_disabled;
 	int                    post_ssao_tried;
 	int                    post_mb_tried;
 	AeronShader*           fullscreen_vs;       /* scene_fullscreen_quad.vert, shared */
