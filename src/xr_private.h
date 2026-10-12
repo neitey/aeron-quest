@@ -77,6 +77,7 @@ typedef struct AeronXr {
 	PFN_xrBeginFrame            xrBeginFrame;
 	PFN_xrEndFrame              xrEndFrame;
 	PFN_xrAcquireSwapchainImage xrAcquireSwapchainImage;
+	PFN_xrEnumerateSwapchainImages xrEnumerateSwapchainImages;
 	PFN_xrWaitSwapchainImage    xrWaitSwapchainImage;
 	PFN_xrReleaseSwapchainImage xrReleaseSwapchainImage;
 	PFN_xrGetInstanceProperties xrGetInstanceProperties;

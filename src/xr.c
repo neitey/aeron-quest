@@ -168,6 +168,7 @@ static int Aeron_XrLoadFunctions(void) {
 	AERON_XR_LOAD(xrBeginFrame);
 	AERON_XR_LOAD(xrEndFrame);
 	AERON_XR_LOAD(xrAcquireSwapchainImage);
+	AERON_XR_LOAD(xrEnumerateSwapchainImages);
 	AERON_XR_LOAD(xrWaitSwapchainImage);
 	AERON_XR_LOAD(xrReleaseSwapchainImage);
 	AERON_XR_LOAD(xrGetInstanceProperties);

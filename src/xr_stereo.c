@@ -57,10 +57,17 @@ typedef struct AeronXrStereoSwapchain {
 	AeronRenderTarget* target;
 	int                acquired;
 	int                released_once;
+	/* Direct mode: the game renders straight into the acquired swapchain
+	 * image (no intermediate target, no per-frame blit). */
+	uint32_t           image_count;
+	AeronRenderTarget* image_targets; /* one non-owning wrapper per image */
+	uint32_t           index;         /* acquired image */
+	uint64_t           direct_frame;  /* frame index the image was acquired for, 0 = none */
 } AeronXrStereoSwapchain;
 
 typedef struct AeronXrStereo {
 	int                    ready;
+	int                    direct;
 	int                    width;
 	int                    height;
 	AeronTextureFormat     format;
@@ -128,7 +135,9 @@ int Aeron_XrStereoInit(void) {
 		static const char*    names[AERON_XR_STEREO_SLOTS] = { "aeron.xr.eye_left", "aeron.xr.eye_right",
 															   "aeron.xr.hud" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
-		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+		/* TRANSFER_SRC lets AERON_XR_CAPTURE read images rendered in place. */
+		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT |
+						  XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
 		info.sampleCount = 1;
 		info.width       = (uint32_t)g_st.width;
 		info.height      = (uint32_t)g_st.height;
@@ -143,6 +152,28 @@ int Aeron_XrStereoInit(void) {
 			Aeron_XrStereoShutdown();
 			return 0;
 		}
+		{
+			uint32_t count = 0;
+			if (XR_SUCCEEDED(g_xr.xrEnumerateSwapchainImages(g_st.chains[i].swapchain, 0, &count, NULL)) &&
+				count > 0) {
+				g_st.chains[i].image_targets = (AeronRenderTarget*)SDL_calloc(count, sizeof(AeronRenderTarget));
+				if (g_st.chains[i].image_targets) {
+					g_st.chains[i].image_count = count;
+					for (uint32_t k = 0; k < count; ++k) {
+						AeronTexture* t = &g_st.chains[i].image_targets[k].color;
+						t->texture      = g_st.chains[i].images[k];
+						t->width        = g_st.width;
+						t->height       = g_st.height;
+						t->mip_count    = 1;
+						t->layer_count  = 1;
+						t->format       = g_st.format;
+						t->usage        = AERON_TEXTURE_USAGE_COLOR_TARGET;
+						t->sample_count = AERON_SAMPLE_COUNT_1;
+						t->owned        = 0;
+					}
+				}
+			}
+		}
 		g_st.chains[i].target = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
 			.width      = g_st.width,
 			.height     = g_st.height,
@@ -155,10 +186,17 @@ int Aeron_XrStereoInit(void) {
 			return 0;
 		}
 	}
-	g_st.ready = 1;
-	Aeron_LogInfo("aeron.xr", "stereo ready: %dx%d per eye (recommended %ux%u, scale %.2f)", g_st.width,
+	g_st.ready  = 1;
+	g_st.direct = g_st.chains[0].image_count && g_st.chains[1].image_count && g_st.chains[2].image_count;
+	{
+		const char* direct = SDL_getenv("AERON_XR_DIRECT");
+		if (direct && direct[0] == '0') {
+			g_st.direct = 0;
+		}
+	}
+	Aeron_LogInfo("aeron.xr", "stereo ready: %dx%d per eye (recommended %ux%u, scale %.2f), %s", g_st.width,
 				  g_st.height, configs[0].recommendedImageRectWidth, configs[0].recommendedImageRectHeight,
-				  (double)scale);
+				  (double)scale, g_st.direct ? "rendering into swapchain images" : "copying to swapchain images");
 	return 1;
 }
 
@@ -171,8 +209,18 @@ void Aeron_XrStereoShutdown(void) {
 		if (g_st.chains[i].swapchain && g_xr.device) {
 			SDL_DestroyGPUXRSwapchain(g_xr.device, g_st.chains[i].swapchain, g_st.chains[i].images);
 		}
+		SDL_free(g_st.chains[i].image_targets);
 	}
 	memset(&g_st, 0, sizeof g_st);
+}
+
+/* The target the game renders slot `slot` into this frame. */
+static AeronRenderTarget* Aeron_XrStereoSlotTarget(int slot) {
+	AeronXrStereoSwapchain* chain = &g_st.chains[slot];
+	if (chain->acquired && chain->direct_frame == g_xr.frame_index && chain->direct_frame != 0) {
+		return &chain->image_targets[chain->index];
+	}
+	return chain->target;
 }
 
 int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
@@ -208,6 +256,30 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 	if (!g_st.located) {
 		return 0;
 	}
+	if (g_st.direct) {
+		/* Acquire every image up front; a slot that cannot be acquired falls
+		 * back to its intermediate target and the blit for this frame. */
+		for (int slot = 0; slot < AERON_XR_STEREO_SLOTS; ++slot) {
+			AeronXrStereoSwapchain* chain = &g_st.chains[slot];
+			if (chain->acquired) {
+				continue;
+			}
+			XrSwapchainImageAcquireInfo acquire_info = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, NULL };
+			XrSwapchainImageWaitInfo    wait_info    = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, NULL };
+			uint32_t                    index        = 0;
+			chain->direct_frame                      = 0;
+			if (XR_FAILED(g_xr.xrAcquireSwapchainImage(chain->swapchain, &acquire_info, &index))) {
+				continue;
+			}
+			chain->acquired   = 1;
+			wait_info.timeout = XR_INFINITE_DURATION;
+			if (index < chain->image_count &&
+				XR_SUCCEEDED(g_xr.xrWaitSwapchainImage(chain->swapchain, &wait_info))) {
+				chain->index        = index;
+				chain->direct_frame = g_xr.frame_index;
+			}
+		}
+	}
 	memset(out, 0, sizeof *out);
 	for (int i = 0; i < AERON_XR_EYE_COUNT; ++i) {
 		const XrView* v              = &g_st.views[i];
@@ -222,9 +294,9 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 		out->views[i].fov[1]         = v->fov.angleRight;
 		out->views[i].fov[2]         = v->fov.angleUp;
 		out->views[i].fov[3]         = v->fov.angleDown;
-		out->eye_targets[i]          = g_st.chains[i].target;
+		out->eye_targets[i]          = Aeron_XrStereoSlotTarget(i);
 	}
-	out->hud_target = g_st.chains[2].target;
+	out->hud_target = Aeron_XrStereoSlotTarget(2);
 	out->width      = g_st.width;
 	out->height     = g_st.height;
 	out->format     = g_st.format;
@@ -250,7 +322,7 @@ SDL_GPUTexture* Aeron_XrStereoTexture(int slot) {
 	if (slot < 0 || slot >= AERON_XR_STEREO_SLOTS || !g_st.chains[slot].target) {
 		return NULL;
 	}
-	return Aeron_RenderTargetGetTexture(g_st.chains[slot].target)->texture;
+	return Aeron_RenderTargetGetTexture(Aeron_XrStereoSlotTarget(slot))->texture;
 }
 
 int Aeron_XrStereoHudVisible(void) { return g_st.hud.visible; }
@@ -276,6 +348,14 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 		uint32_t                    index = 0;
 		XrResult                    result;
 		if (slot == 2 && !g_st.hud.visible) {
+			continue;
+		}
+		if (chain->acquired) {
+			if (chain->direct_frame == g_xr.frame_index && chain->direct_frame != 0) {
+				continue; /* rendered in place */
+			}
+			/* Acquired for direct rendering but the wait failed: skip it. */
+			ok = 0;
 			continue;
 		}
 		result = g_xr.xrAcquireSwapchainImage(chain->swapchain, &acquire_info, &index);
