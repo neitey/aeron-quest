@@ -43,6 +43,16 @@ void Aeron_XrCaptureTrigger(int hand, int captured) {
 	}
 }
 
+/* Grips owned by a game UI, and squeezes that started while owned. */
+static int g_xr_grip_captured[2];
+static int g_xr_grip_latched[2];
+
+void Aeron_XrCaptureGrip(int hand, int captured) {
+	if (hand >= 0 && hand < 2) {
+		g_xr_grip_captured[hand] = captured != 0;
+	}
+}
+
 #define AERON_XR_BUTTON_QUEUE 32
 
 typedef struct AeronXrButtonPress {
@@ -124,6 +134,11 @@ void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms) {
 	(void)hand;
 	(void)amplitude;
 	(void)duration_ms;
+}
+
+int Aeron_XrPointerHit(float out[3]) {
+	(void)out;
+	return 0;
 }
 
 #else
@@ -608,7 +623,7 @@ static void Aeron_XrRotate(const XrQuaternionf* q, const float v[3], float out[3
 
 /* Intersects the right aim ray with the virtual screen quad (LOCAL space,
  * facing +Z at z = -distance). Returns 1 with uv in [0,1] when it hits. */
-static int Aeron_XrPointerUv(float* u, float* v) {
+static int Aeron_XrPointerUvHit(float* u, float* v, float hit_local[3]) {
 	XrSpaceLocation location   = { XR_TYPE_SPACE_LOCATION, NULL };
 	const float     forward[3] = { 0.0f, 0.0f, -1.0f };
 	float           dir[3];
@@ -637,11 +652,27 @@ static int Aeron_XrPointerUv(float* u, float* v) {
 	}
 	hit_x  = location.pose.position.x + dir[0] * t;
 	hit_y  = location.pose.position.y + dir[1] * t - g_xr.screen_height_offset_m;
+	if (hit_local) {
+		hit_local[0] = hit_x;
+		hit_local[1] = location.pose.position.y + dir[1] * t;
+		hit_local[2] = -g_xr.screen_distance_m;
+	}
 	half_w = g_xr.screen_width_m * 0.5f;
 	half_h = half_w * (float)g_xr.screen_height / (float)g_xr.screen_width;
 	*u     = (hit_x + half_w) / (2.0f * half_w);
 	*v     = (half_h - hit_y) / (2.0f * half_h);
 	return *u >= 0.0f && *u <= 1.0f && *v >= 0.0f && *v <= 1.0f;
+}
+
+static int Aeron_XrPointerUv(float* u, float* v) { return Aeron_XrPointerUvHit(u, v, NULL); }
+
+int Aeron_XrPointerHit(float out[3]) {
+	float u = 0.0f;
+	float v = 0.0f;
+	if (!g_xr_pointer_enabled || !g_in.ready || !out) {
+		return 0;
+	}
+	return Aeron_XrPointerUvHit(&u, &v, out);
 }
 
 static void Aeron_XrApplyPointer(AeronInputSnapshot* input, const AeronXrTouchState* touch) {
@@ -770,6 +801,18 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 		} else if (g_xr_trigger_captured[h] && g_in.hand_trigger[h] >= 0.35f) {
 			g_xr_trigger_latched[h] = 1;
 		}
+		if (g_in.hand_grip[h] < 0.2f) {
+			g_xr_grip_latched[h] = 0;
+		} else if (g_xr_grip_captured[h] && g_in.hand_grip[h] >= 0.35f) {
+			g_xr_grip_latched[h] = 1;
+		}
+	}
+	/* A grip a game UI owns (e.g. grabbing a panel) is not a game input. */
+	if (g_xr_grip_captured[AERON_XR_HAND_LEFT] || g_xr_grip_latched[AERON_XR_HAND_LEFT]) {
+		touch.left_grip = 0.0f;
+	}
+	if (g_xr_grip_captured[AERON_XR_HAND_RIGHT] || g_xr_grip_latched[AERON_XR_HAND_RIGHT]) {
+		touch.right_grip = 0.0f;
 	}
 
 	if ((touch.active_left || touch.active_right) && !g_in.logged_active) {

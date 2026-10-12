@@ -129,6 +129,14 @@ int Aeron_XrGetHand(int hand, AeronXrHand* out);
  * gamepad button, no flight-button press): a game UI owns it. A pull that
  * started while captured stays hidden until it is released. */
 void Aeron_XrCaptureTrigger(int hand, int captured);
+/* The same for the grip (squeeze): while captured, and for a squeeze that
+ * started while captured, the game does not see it (no shift layer, no
+ * grip button). */
+void Aeron_XrCaptureGrip(int hand, int captured);
+/* Menus: the point (LOCAL space, metres) where the right controller's aim
+ * ray meets the virtual screen. Returns 0 when it misses or the pointer is
+ * off. */
+int Aeron_XrPointerHit(float out[3]);
 /* Short vibration on one controller (amplitude 0..1). */
 void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms);
 /* Nonzero when frames are also shown in a desktop window (not headless). */

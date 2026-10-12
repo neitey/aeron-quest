@@ -116,7 +116,10 @@ XrPath      Aeron_XrPath(const char* string);
 /* xr_stereo.c */
 int      Aeron_XrStereoInit(void);
 void     Aeron_XrStereoShutdown(void);
-uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity);
+/* `screen` (may be NULL): the virtual screen quad of a backdrop frame,
+ * placed right above the projection layer (under any panels). */
+uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity,
+									  const XrCompositionLayerBaseHeader* screen);
 
 /* xr_input.c */
 int  Aeron_XrInputInit(void);

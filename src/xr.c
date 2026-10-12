@@ -697,20 +697,22 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 	end_info.layerCount           = 0;
 	end_info.layers               = layers;
-	screen_overlay                = g_xr.should_render && Aeron_XrStereoScreenOverlay();
-	stereo_layers                 = g_xr.should_render ? Aeron_XrStereoEndFrameLayers(
-															 layers, g_xr.max_layers < AERON_XR_MAX_LAYERS ? g_xr.max_layers : AERON_XR_MAX_LAYERS) : 0;
+	screen_overlay                = g_xr.should_render && Aeron_XrStereoScreenOverlay() &&
+					 g_xr.screen_has_released_image;
+	if (screen_overlay) {
+		/* Backdrop frame: the virtual screen over the environment. */
+		Aeron_XrFillScreenQuad(&quad);
+	}
+	stereo_layers = g_xr.should_render
+						? Aeron_XrStereoEndFrameLayers(
+							  layers, g_xr.max_layers < AERON_XR_MAX_LAYERS ? g_xr.max_layers : AERON_XR_MAX_LAYERS,
+							  screen_overlay ? (const XrCompositionLayerBaseHeader*)&quad : NULL)
+						: 0;
 	if (!g_xr.should_render) {
-		Aeron_XrStereoEndFrameLayers(layers, 0); /* release anything acquired */
+		Aeron_XrStereoEndFrameLayers(layers, 0, NULL); /* release anything acquired */
 	}
 	if (stereo_layers > 0) {
 		end_info.layerCount = stereo_layers;
-		/* Backdrop frame: the virtual screen on top of the environment. */
-		if (screen_overlay && g_xr.screen_has_released_image &&
-			stereo_layers < (g_xr.max_layers < AERON_XR_MAX_LAYERS ? g_xr.max_layers : AERON_XR_MAX_LAYERS)) {
-			Aeron_XrFillScreenQuad(&quad);
-			layers[end_info.layerCount++] = (const XrCompositionLayerBaseHeader*)&quad;
-		}
 	} else if (g_xr.should_render && g_xr.screen_has_released_image) {
 		Aeron_XrFillScreenQuad(&quad);
 		layers[0]                             = (const XrCompositionLayerBaseHeader*)&quad;
