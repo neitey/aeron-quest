@@ -38,6 +38,10 @@ typedef struct AeronXrStereoFrame {
 	/* Second HUD layer for elements that belong to the world (reticle,
 	 * target brackets), shown behind hud_target. Same size and use. */
 	AeronRenderTarget* hud_world_target;
+	/* Second head-HUD target (same size), for panels that must not share
+	 * pixels with the first, e.g. HUD parts that overlap on the flat
+	 * screen. NULL when unavailable. */
+	AeronRenderTarget* hud_aux_target;
 	/* Console layer (a touch panel the game places near the player, e.g. on
 	 * the lap): its own target of console_width x console_height, NULL when
 	 * unavailable. Clear to transparent and draw; shown only when committed
@@ -73,6 +77,7 @@ typedef struct AeronXrPanel {
 	float position[3];    /* centre, metres, LOCAL space */
 	float orientation[4]; /* quaternion x, y, z, w */
 	float size[2];        /* width, height in metres */
+	int   source;         /* 0 = hud_target, 1 = hud_aux_target */
 } AeronXrPanel;
 
 #define AERON_XR_MAX_PANELS 12
