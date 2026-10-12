@@ -55,6 +55,12 @@ typedef struct AeronXrStereoFrame {
 	AeronRenderTarget* card_target;
 	int                card_width;
 	int                card_height;
+	/* Beam layer: a small target (beam_width x beam_height) for pointer
+	 * beams; parts of it are shown as up to two quads on top of all other
+	 * layers with Aeron_XrStereoCommitBeams. NULL when unavailable. */
+	AeronRenderTarget* beam_target;
+	int                beam_width;
+	int                beam_height;
 } AeronXrStereoFrame;
 
 /* Quad that shows a HUD target over the 3D view.
@@ -111,6 +117,8 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console);
 /* The same for the card target (all-zero rect = the whole target); drawn
  * under the console. */
 void Aeron_XrStereoCommitCard(const AeronXrPanel* card);
+/* Up to two pointer beams (rects in beam_target pixels), drawn last. */
+void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count);
 /* The eye targets are a 3D environment around the flat virtual screen:
  * Aeron_Present submits the eyes as the projection layer and the composed
  * 2D layers on the virtual screen quad on top (menus in a VR room). The

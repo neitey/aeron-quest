@@ -44,6 +44,11 @@ void Aeron_XrStereoCommitBackdrop(void) {}
 
 void Aeron_XrStereoCommitCard(const AeronXrPanel* card) { (void)card; }
 
+void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count) {
+	(void)beams;
+	(void)count;
+}
+
 int Aeron_XrStereoScreenOverlay(void) { return 0; }
 
 int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* c) {
@@ -76,7 +81,8 @@ enum {
 	AERON_XR_SLOT_CONSOLE = 4,
 	AERON_XR_SLOT_HUD_AUX = 5,
 	AERON_XR_SLOT_CARD    = 6,
-	AERON_XR_STEREO_SLOTS = 7 /* 2 eyes + head HUD + world HUD + console + second head HUD + card */
+	AERON_XR_SLOT_BEAM    = 7,
+	AERON_XR_STEREO_SLOTS = 8 /* 2 eyes + head HUD + world HUD + console + second head HUD + card + beams */
 };
 
 /* The console layer (a touch panel near the player's lap) has its own
@@ -85,6 +91,9 @@ enum {
 #define AERON_XR_CONSOLE_HEIGHT 512
 #define AERON_XR_CARD_WIDTH 1024
 #define AERON_XR_CARD_HEIGHT 768
+#define AERON_XR_BEAM_WIDTH 128
+#define AERON_XR_BEAM_HEIGHT 512
+#define AERON_XR_MAX_BEAMS 2
 
 typedef struct AeronXrStereoSwapchain {
 	XrSwapchain        swapchain;
@@ -140,6 +149,10 @@ typedef struct AeronXrStereo {
 	int                    card_visible;
 	AeronXrPanel           card;
 	XrCompositionLayerQuad card_quad;
+	/* Pointer beams: parts of the beam target as quads, on top of all. */
+	int                    beam_count;
+	AeronXrPanel           beams[AERON_XR_MAX_BEAMS];
+	XrCompositionLayerQuad beam_quads[AERON_XR_MAX_BEAMS];
 } AeronXrStereo;
 
 static AeronXrStereo g_st;
@@ -193,14 +206,17 @@ int Aeron_XrStereoInit(void) {
 		static const char*    names[AERON_XR_STEREO_SLOTS] = { "aeron.xr.eye_left", "aeron.xr.eye_right",
 															   "aeron.xr.hud", "aeron.xr.hud_world",
 															   "aeron.xr.console", "aeron.xr.hud_aux",
-															   "aeron.xr.card" };
+															   "aeron.xr.card", "aeron.xr.beam" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
-		const int             optional = i == AERON_XR_SLOT_CONSOLE || i == AERON_XR_SLOT_HUD_AUX || i == AERON_XR_SLOT_CARD;
+		const int             optional = i == AERON_XR_SLOT_CONSOLE || i == AERON_XR_SLOT_HUD_AUX ||
+							 i == AERON_XR_SLOT_CARD || i == AERON_XR_SLOT_BEAM;
 		g_st.chains[i].width  = i == AERON_XR_SLOT_CONSOLE ? AERON_XR_CONSOLE_WIDTH
 							   : i == AERON_XR_SLOT_CARD  ? AERON_XR_CARD_WIDTH
+							   : i == AERON_XR_SLOT_BEAM  ? AERON_XR_BEAM_WIDTH
 														   : g_st.width;
 		g_st.chains[i].height = i == AERON_XR_SLOT_CONSOLE ? AERON_XR_CONSOLE_HEIGHT
 							   : i == AERON_XR_SLOT_CARD   ? AERON_XR_CARD_HEIGHT
+							   : i == AERON_XR_SLOT_BEAM   ? AERON_XR_BEAM_HEIGHT
 														   : g_st.height;
 		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 		if (g_xr.capture_frame_count > 0) {
@@ -389,6 +405,11 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 		out->console_width  = g_st.chains[AERON_XR_SLOT_CONSOLE].width;
 		out->console_height = g_st.chains[AERON_XR_SLOT_CONSOLE].height;
 	}
+	if (g_st.chains[AERON_XR_SLOT_BEAM].swapchain) {
+		out->beam_target = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_BEAM);
+		out->beam_width  = g_st.chains[AERON_XR_SLOT_BEAM].width;
+		out->beam_height = g_st.chains[AERON_XR_SLOT_BEAM].height;
+	}
 	if (g_st.chains[AERON_XR_SLOT_CARD].swapchain) {
 		out->card_target = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_CARD);
 		out->card_width  = g_st.chains[AERON_XR_SLOT_CARD].width;
@@ -409,6 +430,7 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
 	g_st.panel_count     = 0;
 	g_st.console_visible = 0;
 	g_st.card_visible    = 0;
+	g_st.beam_count      = 0;
 	g_st.hud_aux_visible = 0;
 	memset(&g_st.hud, 0, sizeof g_st.hud);
 	memset(&g_st.hud_world, 0, sizeof g_st.hud_world);
@@ -483,6 +505,18 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) {
 	g_st.console_visible = 1;
 }
 
+void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count) {
+	g_st.beam_count = 0;
+	if (!g_st.committed || !beams || !g_st.chains[AERON_XR_SLOT_BEAM].swapchain) {
+		return;
+	}
+	for (int i = 0; i < count && g_st.beam_count < AERON_XR_MAX_BEAMS; ++i) {
+		if (beams[i].size[0] > 0.0f && beams[i].size[1] > 0.0f && beams[i].rect[2] > 0 && beams[i].rect[3] > 0) {
+			g_st.beams[g_st.beam_count++] = beams[i];
+		}
+	}
+}
+
 void Aeron_XrStereoCommitCard(const AeronXrPanel* card) {
 	const AeronXrStereoSwapchain* chain = &g_st.chains[AERON_XR_SLOT_CARD];
 	g_st.card_visible                   = 0;
@@ -528,6 +562,9 @@ static int Aeron_XrStereoSlotVisible(int slot) {
 	}
 	if (slot == AERON_XR_SLOT_CONSOLE) {
 		return g_st.console_visible && g_st.chains[slot].swapchain;
+	}
+	if (slot == AERON_XR_SLOT_BEAM) {
+		return g_st.beam_count > 0 && g_st.chains[slot].swapchain;
 	}
 	if (slot == AERON_XR_SLOT_CARD) {
 		return g_st.card_visible && g_st.chains[slot].swapchain;
@@ -845,6 +882,30 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
 	}
 	g_st.console_visible = 0;
+	/* Pointer beams over everything they point at. */
+	for (int i = 0; i < g_st.beam_count && g_st.chains[AERON_XR_SLOT_BEAM].released_once && count < capacity; ++i) {
+		const AeronXrPanel*     p    = &g_st.beams[i];
+		XrCompositionLayerQuad* quad = &g_st.beam_quads[i];
+		memset(quad, 0, sizeof *quad);
+		quad->type                             = XR_TYPE_COMPOSITION_LAYER_QUAD;
+		quad->layerFlags                       = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		quad->space                            = g_xr.local_space;
+		quad->eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
+		quad->subImage.swapchain               = g_st.chains[AERON_XR_SLOT_BEAM].swapchain;
+		quad->subImage.imageRect.offset.x      = p->rect[0];
+		quad->subImage.imageRect.offset.y      = p->rect[1];
+		quad->subImage.imageRect.extent.width  = p->rect[2];
+		quad->subImage.imageRect.extent.height = p->rect[3];
+		quad->pose.orientation = Aeron_XrQuatNormalize(
+			(XrQuaternionf) { p->orientation[0], p->orientation[1], p->orientation[2], p->orientation[3] });
+		quad->pose.position.x = p->position[0];
+		quad->pose.position.y = p->position[1];
+		quad->pose.position.z = p->position[2];
+		quad->size.width      = p->size[0];
+		quad->size.height     = p->size[1];
+		layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
+	}
+	g_st.beam_count = 0;
 	if (!g_st.hud.visible || !g_st.hud.head_locked) {
 		g_st.follow_valid = 0; /* next appearance starts in place, no swoop */
 	}
