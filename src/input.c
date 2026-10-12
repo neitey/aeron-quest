@@ -244,3 +244,12 @@ void Aeron_HandleEvent(const SDL_Event* event) {
 }
 
 const AeronInputSnapshot* Aeron_InputSnapshot(void) { return &g_aeron.input; }
+
+void Aeron_InputSuppressMouseButtons(void) {
+	g_aeron.input.mouse.buttons                = 0;
+	g_aeron.input.mouse.pressed_buttons        = 0;
+	g_aeron.input.mouse.released_buttons       = 0;
+	g_aeron.input.mouse.double_clicked_buttons = 0;
+	g_aeron.input.mouse.wheel_x                = 0;
+	g_aeron.input.mouse.wheel_y                = 0;
+}

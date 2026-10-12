@@ -126,6 +126,9 @@ int Aeron_GetPresentationPixelSize(int* width, int* height);
 
 /* Returns the current immutable input snapshot for this frame. */
 const AeronInputSnapshot* Aeron_InputSnapshot(void);
+/* Clears this frame's mouse buttons and wheel in the snapshot, for an
+ * overlay that consumed them (later readers see no click). */
+void Aeron_InputSuppressMouseButtons(void);
 /* Returns the runtime VFS used by the application. */
 AeronVfs* Aeron_GetVfs(void);
 /* Shows or hides the host OS cursor; returns nonzero on success. */

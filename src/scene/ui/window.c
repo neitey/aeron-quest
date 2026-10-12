@@ -43,6 +43,10 @@ int ui_begin_window_common(AeronUiContext* ctx, const char* title, const AeronUi
 	}
 
 	ctx->any_window = 1;
+	if (ctx->mouse_present && ctx->mouse_x >= rect.x && ctx->mouse_x < rect.x + rect.w &&
+		ctx->mouse_y >= rect.y && ctx->mouse_y < rect.y + rect.h) {
+		ctx->mouse_over_window = 1;
+	}
 
 	ui_draw_shadow(ctx, &rect, NULL);
 	ui_draw_surface(ctx, &rect, ctx->theme.surface, NULL, 0, ctx->theme.surface_border,

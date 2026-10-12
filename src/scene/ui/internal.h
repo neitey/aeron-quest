@@ -24,7 +24,7 @@
 #define AERON_UI_DEFAULT_RECORDS 8192
 #define AERON_UI_ID_STACK_CAP 8
 #define AERON_UI_LAYOUT_CAP 8
-#define AERON_UI_MAX_COLUMNS 8
+#define AERON_UI_MAX_COLUMNS 12
 #define AERON_UI_MAX_SCOPES 4
 #define AERON_UI_MAX_SCROLLS 4
 #define AERON_UI_STATE_SLOTS 256
@@ -139,6 +139,7 @@ struct AeronUiContext {
 	int   mouse_present;
 	int   mouse_moved;
 	float last_mouse_x, last_mouse_y;
+	int   mouse_over_window; /* the mouse is inside a window drawn this frame */
 
 	/* Widget index, double-buffered. */
 	UiWidgetRec* widgets;

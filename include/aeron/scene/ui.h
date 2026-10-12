@@ -175,6 +175,7 @@ typedef struct AeronUiOutput {
 	int wants_gamepad;
 	int capture_all;    /* keyboard/controller capture owns this frame: suppress everything */
 	int cancel_pressed; /* unconsumed cancel — pop the game screen */
+	int mouse_over;     /* the mouse is inside one of this frame's windows (overlays) */
 } AeronUiOutput;
 
 void          AeronUi_BeginFrame(AeronUiContext* ctx, const AeronUiFrameDesc* frame);
