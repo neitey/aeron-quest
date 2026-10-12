@@ -63,6 +63,7 @@ typedef struct AeronXrStereoSwapchain {
 	AeronRenderTarget* image_targets; /* one non-owning wrapper per image */
 	uint32_t           index;         /* acquired image */
 	uint64_t           direct_frame;  /* frame index the image was acquired for, 0 = none */
+	int                waited;        /* the acquired image passed xrWaitSwapchainImage */
 } AeronXrStereoSwapchain;
 
 typedef struct AeronXrStereo {
@@ -268,6 +269,7 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 			XrSwapchainImageWaitInfo    wait_info    = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, NULL };
 			uint32_t                    index        = 0;
 			chain->direct_frame                      = 0;
+			chain->waited                            = 0;
 			if (XR_FAILED(g_xr.xrAcquireSwapchainImage(chain->swapchain, &acquire_info, &index))) {
 				continue;
 			}
@@ -277,6 +279,7 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 				XR_SUCCEEDED(g_xr.xrWaitSwapchainImage(chain->swapchain, &wait_info))) {
 				chain->index        = index;
 				chain->direct_frame = g_xr.frame_index;
+				chain->waited       = 1;
 			}
 		}
 	}
@@ -351,11 +354,25 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 			continue;
 		}
 		if (chain->acquired) {
+			if (!chain->waited) {
+				ok = 0; /* acquired for direct rendering but the wait failed */
+				continue;
+			}
 			if (chain->direct_frame == g_xr.frame_index && chain->direct_frame != 0) {
 				continue; /* rendered in place */
 			}
-			/* Acquired for direct rendering but the wait failed: skip it. */
-			ok = 0;
+			/* Acquired in an earlier frame index: the game drew into the
+			 * intermediate target, so copy it into the waiting image. */
+			SDL_zero(blit);
+			blit.source.texture      = Aeron_RenderTargetGetTexture(chain->target)->texture;
+			blit.source.w            = (Uint32)g_st.width;
+			blit.source.h            = (Uint32)g_st.height;
+			blit.destination.texture = chain->images[chain->index];
+			blit.destination.w       = (Uint32)g_st.width;
+			blit.destination.h       = (Uint32)g_st.height;
+			blit.load_op             = SDL_GPU_LOADOP_DONT_CARE;
+			blit.filter              = SDL_GPU_FILTER_NEAREST;
+			SDL_BlitGPUTexture(command_buffer, &blit);
 			continue;
 		}
 		result = g_xr.xrAcquireSwapchainImage(chain->swapchain, &acquire_info, &index);
@@ -400,7 +417,9 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 			if (XR_SUCCEEDED(g_xr.xrReleaseSwapchainImage(chain->swapchain, &release))) {
 				chain->released_once = 1;
 			}
-			chain->acquired = 0;
+			chain->acquired     = 0;
+			chain->waited       = 0;
+			chain->direct_frame = 0;
 		}
 	}
 	if (!Aeron_XrStereoCommitted()) {
