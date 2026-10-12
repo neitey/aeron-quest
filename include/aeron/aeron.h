@@ -109,6 +109,23 @@ void Aeron_XrSetFlightButtons(int enabled);
 /* Pops the oldest queued flight-button press. Returns 0 when none is
  * queued. */
 int Aeron_XrPollButton(AeronXrButton* button, int* shifted);
+/* A tracked VR controller for touch panels the game draws itself. */
+typedef struct AeronXrHand {
+	int   valid;          /* pose tracked this frame */
+	float position[3];    /* aim pose in OpenXR LOCAL space, metres */
+	float orientation[4]; /* quaternion x, y, z, w; the aim ray is -Z */
+	float trigger;        /* 0..1 */
+	float grip;           /* 0..1 */
+} AeronXrHand;
+/* Fills `out` for hand 0 (left) or 1 (right) at this frame's predicted
+ * display time. Returns out->valid. */
+int Aeron_XrGetHand(int hand, AeronXrHand* out);
+/* While captured, the hand's trigger is not reported to the game (no
+ * gamepad button, no flight-button press): a game UI owns it. A pull that
+ * started while captured stays hidden until it is released. */
+void Aeron_XrCaptureTrigger(int hand, int captured);
+/* Short vibration on one controller (amplitude 0..1). */
+void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms);
 /* Nonzero when frames are also shown in a desktop window (not headless). */
 int Aeron_HasDesktopMirror(void);
 /* Shuts down Aeron and releases all runtime-owned resources. */

@@ -36,6 +36,8 @@ void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPa
 	(void)count;
 }
 
+void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) { (void)console; }
+
 int Aeron_XrStereoCommitted(void) { return 0; }
 
 int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* c) {
@@ -65,11 +67,19 @@ enum {
 	AERON_XR_EYE_COUNT    = 2,
 	AERON_XR_SLOT_HUD     = 2,
 	AERON_XR_SLOT_HUD_WORLD = 3,
-	AERON_XR_STEREO_SLOTS = 4 /* 2 eyes + head HUD + world HUD */
+	AERON_XR_SLOT_CONSOLE = 4,
+	AERON_XR_STEREO_SLOTS = 5 /* 2 eyes + head HUD + world HUD + console */
 };
+
+/* The console layer (a touch panel near the player's lap) has its own
+ * fixed-size swapchain, independent of the eye size. */
+#define AERON_XR_CONSOLE_WIDTH 1536
+#define AERON_XR_CONSOLE_HEIGHT 512
 
 typedef struct AeronXrStereoSwapchain {
 	XrSwapchain        swapchain;
+	int                width;
+	int                height;
 	SDL_GPUTexture**   images;
 	AeronRenderTarget* target;
 	int                acquired;
@@ -110,6 +120,10 @@ typedef struct AeronXrStereo {
 	AeronXrPanel           panels[AERON_XR_MAX_PANELS];
 	int                    panel_count;
 	XrCompositionLayerQuad panel_quads[AERON_XR_MAX_PANELS];
+	/* Console panel: a part of the console target as one more quad. */
+	int                    console_visible;
+	AeronXrPanel           console;
+	XrCompositionLayerQuad console_quad;
 } AeronXrStereo;
 
 static AeronXrStereo g_st;
@@ -161,16 +175,20 @@ int Aeron_XrStereoInit(void) {
 
 	for (i = 0; i < AERON_XR_STEREO_SLOTS; ++i) {
 		static const char*    names[AERON_XR_STEREO_SLOTS] = { "aeron.xr.eye_left", "aeron.xr.eye_right",
-															   "aeron.xr.hud", "aeron.xr.hud_world" };
+															   "aeron.xr.hud", "aeron.xr.hud_world",
+															   "aeron.xr.console" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
+		const int             optional                     = i == AERON_XR_SLOT_CONSOLE;
+		g_st.chains[i].width  = optional ? AERON_XR_CONSOLE_WIDTH : g_st.width;
+		g_st.chains[i].height = optional ? AERON_XR_CONSOLE_HEIGHT : g_st.height;
 		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 		if (g_xr.capture_frame_count > 0) {
 			/* Lets AERON_XR_CAPTURE read images rendered in place. */
 			info.usageFlags |= XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
 		}
 		info.sampleCount = 1;
-		info.width       = (uint32_t)g_st.width;
-		info.height      = (uint32_t)g_st.height;
+		info.width       = (uint32_t)g_st.chains[i].width;
+		info.height      = (uint32_t)g_st.chains[i].height;
 		info.faceCount   = 1;
 		info.arraySize   = 1;
 		info.mipCount    = 1;
@@ -179,6 +197,10 @@ int Aeron_XrStereoInit(void) {
 		if (XR_FAILED(result)) {
 			Aeron_LogWarn("aeron.xr", "stereo swapchain %d failed: %s (%s)", i, Aeron_XrResultName(result),
 						  SDL_GetError());
+			if (optional) {
+				memset(&g_st.chains[i], 0, sizeof g_st.chains[i]);
+				continue; /* no console layer */
+			}
 			Aeron_XrStereoShutdown();
 			return 0;
 		}
@@ -192,8 +214,8 @@ int Aeron_XrStereoInit(void) {
 					for (uint32_t k = 0; k < count; ++k) {
 						AeronTexture* t = &g_st.chains[i].image_targets[k].color;
 						t->texture      = g_st.chains[i].images[k];
-						t->width        = g_st.width;
-						t->height       = g_st.height;
+						t->width        = g_st.chains[i].width;
+						t->height       = g_st.chains[i].height;
 						t->mip_count    = 1;
 						t->layer_count  = 1;
 						t->format       = g_st.format;
@@ -205,8 +227,8 @@ int Aeron_XrStereoInit(void) {
 			}
 		}
 		g_st.chains[i].target = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
-			.width      = g_st.width,
-			.height     = g_st.height,
+			.width      = g_st.chains[i].width,
+			.height     = g_st.chains[i].height,
 			.format     = g_st.format,
 			.debug_name = names[i],
 		});
@@ -219,7 +241,7 @@ int Aeron_XrStereoInit(void) {
 	g_st.ready  = 1;
 	g_st.direct = 1;
 	for (i = 0; i < AERON_XR_STEREO_SLOTS; ++i) {
-		if (!g_st.chains[i].image_count) {
+		if (g_st.chains[i].swapchain && !g_st.chains[i].image_count) {
 			g_st.direct = 0;
 		}
 	}
@@ -296,7 +318,7 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 		 * back to its intermediate target and the blit for this frame. */
 		for (int slot = 0; slot < AERON_XR_STEREO_SLOTS; ++slot) {
 			AeronXrStereoSwapchain* chain = &g_st.chains[slot];
-			if (chain->acquired) {
+			if (chain->acquired || !chain->swapchain) {
 				continue;
 			}
 			XrSwapchainImageAcquireInfo acquire_info = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, NULL };
@@ -338,6 +360,11 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 	}
 	out->hud_target       = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_HUD);
 	out->hud_world_target = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_HUD_WORLD);
+	if (g_st.chains[AERON_XR_SLOT_CONSOLE].swapchain) {
+		out->console_target = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_CONSOLE);
+		out->console_width  = g_st.chains[AERON_XR_SLOT_CONSOLE].width;
+		out->console_height = g_st.chains[AERON_XR_SLOT_CONSOLE].height;
+	}
 	out->width      = g_st.width;
 	out->height     = g_st.height;
 	out->format     = g_st.format;
@@ -348,8 +375,9 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
 	if (!g_st.ready || !g_st.located || g_st.located_frame != g_xr.frame_index) {
 		return;
 	}
-	g_st.committed   = 1;
-	g_st.panel_count = 0;
+	g_st.committed       = 1;
+	g_st.panel_count     = 0;
+	g_st.console_visible = 0;
 	memset(&g_st.hud, 0, sizeof g_st.hud);
 	memset(&g_st.hud_world, 0, sizeof g_st.hud_world);
 	if (hud) {
@@ -398,6 +426,22 @@ void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPa
 	g_st.hud.size[0] = 0.0f; /* no full-size head quad */
 }
 
+void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) {
+	const AeronXrStereoSwapchain* chain = &g_st.chains[AERON_XR_SLOT_CONSOLE];
+	g_st.console_visible                = 0;
+	if (!g_st.committed || !console || !chain->swapchain || console->size[0] <= 0.0f || console->size[1] <= 0.0f) {
+		return;
+	}
+	g_st.console = *console;
+	if (g_st.console.rect[2] <= 0 || g_st.console.rect[3] <= 0) {
+		g_st.console.rect[0] = 0;
+		g_st.console.rect[1] = 0;
+		g_st.console.rect[2] = chain->width;
+		g_st.console.rect[3] = chain->height;
+	}
+	g_st.console_visible = 1;
+}
+
 int Aeron_XrStereoCommitted(void) {
 	return g_st.ready && g_st.committed && g_st.located_frame == g_xr.frame_index && Aeron_XrShouldRender();
 }
@@ -417,6 +461,9 @@ static int Aeron_XrStereoSlotVisible(int slot) {
 	}
 	if (slot == AERON_XR_SLOT_HUD_WORLD) {
 		return g_st.hud_world.visible;
+	}
+	if (slot == AERON_XR_SLOT_CONSOLE) {
+		return g_st.console_visible && g_st.chains[slot].swapchain;
 	}
 	return 1;
 }
@@ -456,11 +503,11 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 			 * intermediate target, so copy it into the waiting image. */
 			SDL_zero(blit);
 			blit.source.texture      = Aeron_RenderTargetGetTexture(chain->target)->texture;
-			blit.source.w            = (Uint32)g_st.width;
-			blit.source.h            = (Uint32)g_st.height;
+			blit.source.w            = (Uint32)chain->width;
+			blit.source.h            = (Uint32)chain->height;
 			blit.destination.texture = chain->images[chain->index];
-			blit.destination.w       = (Uint32)g_st.width;
-			blit.destination.h       = (Uint32)g_st.height;
+			blit.destination.w       = (Uint32)chain->width;
+			blit.destination.h       = (Uint32)chain->height;
 			blit.load_op             = SDL_GPU_LOADOP_DONT_CARE;
 			blit.filter              = SDL_GPU_FILTER_NEAREST;
 			SDL_BlitGPUTexture(command_buffer, &blit);
@@ -482,11 +529,11 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 		}
 		SDL_zero(blit);
 		blit.source.texture      = Aeron_XrStereoTexture(slot);
-		blit.source.w            = (Uint32)g_st.width;
-		blit.source.h            = (Uint32)g_st.height;
+		blit.source.w            = (Uint32)chain->width;
+		blit.source.h            = (Uint32)chain->height;
 		blit.destination.texture = chain->images[index];
-		blit.destination.w       = (Uint32)g_st.width;
-		blit.destination.h       = (Uint32)g_st.height;
+		blit.destination.w       = (Uint32)chain->width;
+		blit.destination.h       = (Uint32)chain->height;
 		blit.load_op             = SDL_GPU_LOADOP_DONT_CARE;
 		blit.filter              = SDL_GPU_FILTER_NEAREST;
 		SDL_BlitGPUTexture(command_buffer, &blit);
@@ -601,7 +648,7 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 
 	for (slot = 0; slot < AERON_XR_STEREO_SLOTS; ++slot) {
 		AeronXrStereoSwapchain* chain = &g_st.chains[slot];
-		if (chain->acquired) {
+		if (chain->acquired && chain->swapchain) {
 			XrSwapchainImageReleaseInfo release = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, NULL };
 			if (XR_SUCCEEDED(g_xr.xrReleaseSwapchainImage(chain->swapchain, &release))) {
 				chain->released_once = 1;
@@ -671,6 +718,30 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 			layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
 		}
 	}
+	/* The console last: it is the panel the hands reach into. */
+	if (g_st.console_visible && g_st.chains[AERON_XR_SLOT_CONSOLE].released_once && count < capacity) {
+		const AeronXrPanel*     p    = &g_st.console;
+		XrCompositionLayerQuad* quad = &g_st.console_quad;
+		memset(quad, 0, sizeof *quad);
+		quad->type                             = XR_TYPE_COMPOSITION_LAYER_QUAD;
+		quad->layerFlags                       = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		quad->space                            = g_xr.local_space;
+		quad->eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
+		quad->subImage.swapchain               = g_st.chains[AERON_XR_SLOT_CONSOLE].swapchain;
+		quad->subImage.imageRect.offset.x      = p->rect[0];
+		quad->subImage.imageRect.offset.y      = p->rect[1];
+		quad->subImage.imageRect.extent.width  = p->rect[2];
+		quad->subImage.imageRect.extent.height = p->rect[3];
+		quad->pose.orientation = Aeron_XrQuatNormalize(
+			(XrQuaternionf) { p->orientation[0], p->orientation[1], p->orientation[2], p->orientation[3] });
+		quad->pose.position.x = p->position[0];
+		quad->pose.position.y = p->position[1];
+		quad->pose.position.z = p->position[2];
+		quad->size.width      = p->size[0];
+		quad->size.height     = p->size[1];
+		layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
+	}
+	g_st.console_visible = 0;
 	if (!g_st.hud.visible || !g_st.hud.head_locked) {
 		g_st.follow_valid = 0; /* next appearance starts in place, no swoop */
 	}

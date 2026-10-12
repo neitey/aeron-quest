@@ -38,6 +38,13 @@ typedef struct AeronXrStereoFrame {
 	/* Second HUD layer for elements that belong to the world (reticle,
 	 * target brackets), shown behind hud_target. Same size and use. */
 	AeronRenderTarget* hud_world_target;
+	/* Console layer (a touch panel the game places near the player, e.g. on
+	 * the lap): its own target of console_width x console_height, NULL when
+	 * unavailable. Clear to transparent and draw; shown only when committed
+	 * with Aeron_XrStereoCommitConsole. */
+	AeronRenderTarget* console_target;
+	int                console_width;
+	int                console_height;
 } AeronXrStereoFrame;
 
 /* Quad that shows a HUD target over the 3D view.
@@ -86,6 +93,10 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
  * `count` panels each show a part of hud_target. Panels beyond what the
  * runtime's layer limit allows are dropped (last first). */
 void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPanel* panels, int count);
+/* After one of the commits above: also show `console` (rect in
+ * console_target pixels; all-zero rect = the whole target), on top of the
+ * other layers. */
+void Aeron_XrStereoCommitConsole(const AeronXrPanel* console);
 
 #ifdef __cplusplus
 }

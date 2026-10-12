@@ -32,6 +32,16 @@
 static int g_xr_pointer_enabled = 1;
 static int g_xr_menu_keys       = 0;
 static int g_xr_flight_buttons  = 0;
+/* Triggers owned by a game UI (Aeron_XrCaptureTrigger), and pulls that
+ * started while owned (hidden until released). */
+static int g_xr_trigger_captured[2];
+static int g_xr_trigger_latched[2];
+
+void Aeron_XrCaptureTrigger(int hand, int captured) {
+	if (hand >= 0 && hand < 2) {
+		g_xr_trigger_captured[hand] = captured != 0;
+	}
+}
 
 #define AERON_XR_BUTTON_QUEUE 32
 
@@ -102,6 +112,20 @@ int Aeron_XrRumble(uint16_t low, uint16_t high, uint32_t duration_ms) {
 	return 0;
 }
 
+int Aeron_XrGetHand(int hand, AeronXrHand* out) {
+	(void)hand;
+	if (out) {
+		memset(out, 0, sizeof *out);
+	}
+	return 0;
+}
+
+void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms) {
+	(void)hand;
+	(void)amplitude;
+	(void)duration_ms;
+}
+
 #else
 
 #include "xr_private.h"
@@ -133,6 +157,9 @@ typedef struct AeronXrInput {
 	int      menu_enter_prev, menu_space_prev, menu_escape_prev;
 	/* Flight buttons: previous digital state per AeronXrButton. */
 	uint8_t button_prev[AERON_XR_BUTTON_COUNT];
+	/* Last synced analog values, for Aeron_XrGetHand. */
+	float hand_trigger[AERON_XR_HAND_COUNT];
+	float hand_grip[AERON_XR_HAND_COUNT];
 } AeronXrInput;
 
 static AeronXrInput g_in;
@@ -505,6 +532,11 @@ static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
 		}
 	}
 	for (b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
+		if (b == AERON_XR_BUTTON_LEFT_TRIGGER &&
+			(g_xr_trigger_captured[AERON_XR_HAND_LEFT] || g_xr_trigger_latched[AERON_XR_HAND_LEFT])) {
+			g_in.button_prev[b] = now[b]; /* owned by a game UI */
+			continue;
+		}
 		if (g_xr_flight_buttons && now[b] && !g_in.button_prev[b]) {
 			Aeron_XrQueueButton((AeronXrButton)b, shifted);
 		}
@@ -672,6 +704,18 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	touch.y                 = Aeron_XrBool(g_in.y, -1);
 	touch.menu              = Aeron_XrBool(g_in.menu, -1);
 
+	g_in.hand_trigger[AERON_XR_HAND_LEFT]  = touch.left_trigger;
+	g_in.hand_trigger[AERON_XR_HAND_RIGHT] = touch.right_trigger;
+	g_in.hand_grip[AERON_XR_HAND_LEFT]     = touch.left_grip;
+	g_in.hand_grip[AERON_XR_HAND_RIGHT]    = touch.right_grip;
+	for (int h = 0; h < AERON_XR_HAND_COUNT; ++h) {
+		if (g_in.hand_trigger[h] < 0.2f) {
+			g_xr_trigger_latched[h] = 0;
+		} else if (g_xr_trigger_captured[h] && g_in.hand_trigger[h] >= 0.35f) {
+			g_xr_trigger_latched[h] = 1;
+		}
+	}
+
 	if ((touch.active_left || touch.active_right) && !g_in.logged_active) {
 		Aeron_LogInfo("aeron.xr", "controllers active (left %d, right %d)", touch.active_left,
 					  touch.active_right);
@@ -724,6 +768,12 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 					memset(mapped.right_stick, 0, sizeof mapped.right_stick); /* flicks */
 				}
 			}
+			if (g_xr_trigger_captured[AERON_XR_HAND_RIGHT] || g_xr_trigger_latched[AERON_XR_HAND_RIGHT]) {
+				mapped.right_trigger = 0.0f; /* owned by a game UI: no fire */
+			}
+			if (g_xr_trigger_captured[AERON_XR_HAND_LEFT] || g_xr_trigger_latched[AERON_XR_HAND_LEFT]) {
+				mapped.left_trigger = 0.0f;
+			}
 			AeronXrTouchMapper_Map(&g_in.mapper, &mapped, dt_seconds, pad);
 		}
 		pad->instance_id = AERON_XR_CONTROLLER_INSTANCE_ID;
@@ -768,6 +818,50 @@ int Aeron_XrRumble(uint16_t low, uint16_t high, uint32_t duration_ms) {
 		g_xr.xrApplyHapticFeedback(g_xr.session, &info, (const XrHapticBaseHeader*)&vibration);
 	}
 	return 1;
+}
+
+int Aeron_XrGetHand(int hand, AeronXrHand* out) {
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION, NULL };
+	if (!out) {
+		return 0;
+	}
+	memset(out, 0, sizeof *out);
+	if (hand < 0 || hand >= AERON_XR_HAND_COUNT || !g_in.ready || !g_in.aim_space[hand] ||
+		!g_xr.predicted_display_time || !Aeron_XrSessionRunning()) {
+		return 0;
+	}
+	if (XR_FAILED(g_xr.xrLocateSpace(g_in.aim_space[hand], g_xr.local_space, g_xr.predicted_display_time,
+									 &location)) ||
+		!(location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) ||
+		!(location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+		return 0;
+	}
+	out->position[0]    = location.pose.position.x;
+	out->position[1]    = location.pose.position.y;
+	out->position[2]    = location.pose.position.z;
+	out->orientation[0] = location.pose.orientation.x;
+	out->orientation[1] = location.pose.orientation.y;
+	out->orientation[2] = location.pose.orientation.z;
+	out->orientation[3] = location.pose.orientation.w;
+	out->trigger        = g_in.hand_trigger[hand];
+	out->grip           = g_in.hand_grip[hand];
+	out->valid          = 1;
+	return 1;
+}
+
+void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms) {
+	XrHapticVibration  vibration = { XR_TYPE_HAPTIC_VIBRATION, NULL };
+	XrHapticActionInfo info      = { XR_TYPE_HAPTIC_ACTION_INFO, NULL };
+	if (hand < 0 || hand >= AERON_XR_HAND_COUNT || !g_in.ready || !Aeron_XrSessionRunning() ||
+		amplitude <= 0.0f || duration_ms <= 0) {
+		return;
+	}
+	info.action         = g_in.haptic;
+	info.subactionPath  = g_in.hand[hand];
+	vibration.amplitude = amplitude > 1.0f ? 1.0f : amplitude;
+	vibration.duration  = (XrDuration)duration_ms * 1000000;
+	vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+	g_xr.xrApplyHapticFeedback(g_xr.session, &info, (const XrHapticBaseHeader*)&vibration);
 }
 
 #endif /* AERON_HAS_OPENXR */
