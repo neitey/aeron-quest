@@ -841,6 +841,7 @@ target_include_directories(aeron_scene
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bcdec
 )
 
 target_link_libraries(aeron_scene

@@ -10,6 +10,7 @@
 #include "aeron/scene/ktx2_reader.h"
 
 #include "aeron/log.h"
+#include "aeron/render.h"
 
 #include <stdarg.h>
 #include <stdbool.h>
@@ -42,6 +43,10 @@ static const uint8_t kKtx2Magic[12] = {
 #define VK_FORMAT_BC7_UNORM_BLK 145
 #define VK_FORMAT_BC7_SRGB_BLK 146
 
+#include "bcdec_impl.h"
+
+#include <SDL3/SDL_stdinc.h>
+
 struct Ktx2 {
 	uint8_t*           blob; /* whole file, owned */
 	size_t             blob_size;
@@ -63,6 +68,9 @@ struct Ktx2 {
 	Ktx2Level* levels;
 	uint8_t**  level_owned;
 };
+
+static int  bc_fallback_wanted(AeronTextureFormat fmt);
+static int  bc_fallback_decode(Ktx2* k, const char* path);
 
 static void ktx2_log(const char* fmt, ...) {
 	va_list args;
@@ -372,9 +380,193 @@ static Ktx2* ktx2_parse_bytes(const uint8_t* bytes, size_t blob_size, const char
 	k->bytes_per_block  = bytes_per_block;
 	k->levels           = levels;
 	k->level_owned      = level_owned;
+	if (block_compressed && bc_fallback_wanted(fmt) && !bc_fallback_decode(k, path)) {
+		ktx2_log("[ktx2] %s: BC fallback decode failed (out of memory)", path);
+		if (status)
+			*status = KTX2_OPEN_RESOURCE_FAILURE;
+		ktx2_close(k);
+		return NULL;
+	}
 	if (status)
 		*status = KTX2_OPEN_SUCCESS;
 	return k;
+}
+
+/* ---- BCn fallback for GPUs without BC texture support -------------------
+ * Mobile GPUs (Meta Quest / Adreno, most Mali) sample ASTC/ETC2 but not BCn.
+ * When the device cannot sample the file's BC format, every level is decoded
+ * to RGBA8 (RGBA16F for BC6H) on load, so callers see an uncompressed KTX2.
+ * Levels above AERON_BC_FALLBACK_MAX_SIZE (default 2048) are dropped to keep
+ * the 4x larger textures within mobile memory budgets.
+ * AERON_BC_FALLBACK=1 forces the fallback (testing), =0 disables it. */
+static int bc_fallback_wanted(AeronTextureFormat fmt) {
+	const char* env = SDL_getenv("AERON_BC_FALLBACK");
+	if (env && env[0] == '0')
+		return 0;
+	if (env && env[0] == '1')
+		return 1;
+	/* Only with a live GPU device (RGBA8 is always sampleable there);
+	 * offline tools keep the compressed data. */
+	return Aeron_TextureFormatSupported(AERON_TEXTURE_FORMAT_RGBA8_UNORM, AERON_TEXTURE_USAGE_SAMPLED) &&
+		   !Aeron_TextureFormatSupported(fmt, AERON_TEXTURE_USAGE_SAMPLED);
+}
+
+static int bc_fallback_max_size(void) {
+	const char* env = SDL_getenv("AERON_BC_FALLBACK_MAX_SIZE");
+	int         v   = env ? SDL_atoi(env) : 0;
+	return v >= 64 ? v : 2048;
+}
+
+/* Decodes one face of one level. `out` holds w*h*out_bpp bytes. */
+static void bc_decode_face(AeronTextureFormat fmt, const uint8_t* src, int w, int h, uint8_t* out, int out_bpp) {
+	const int bw    = (w + 3) / 4;
+	const int bh    = (h + 3) / 4;
+	const int bpb   = (fmt == AERON_TEXTURE_FORMAT_BC1_RGBA_UNORM || fmt == AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB ||
+                     fmt == AERON_TEXTURE_FORMAT_BC4_R_UNORM)
+						  ? 8
+						  : 16;
+	uint8_t   block[4 * 4 * 8]; /* up to 8 bytes per pixel (RGBA16F) */
+	for (int by = 0; by < bh; by++) {
+		for (int bx = 0; bx < bw; bx++) {
+			const uint8_t* b = src + ((size_t)by * (size_t)bw + (size_t)bx) * (size_t)bpb;
+			switch (fmt) {
+				case AERON_TEXTURE_FORMAT_BC1_RGBA_UNORM:
+				case AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB:
+					bcdec_bc1(b, block, 16);
+					break;
+				case AERON_TEXTURE_FORMAT_BC3_RGBA_UNORM:
+				case AERON_TEXTURE_FORMAT_BC3_RGBA_SRGB:
+					bcdec_bc3(b, block, 16);
+					break;
+				case AERON_TEXTURE_FORMAT_BC7_RGBA_UNORM:
+				case AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB:
+					bcdec_bc7(b, block, 16);
+					break;
+				case AERON_TEXTURE_FORMAT_BC4_R_UNORM: {
+					uint8_t r[16];
+					bcdec_bc4(b, r, 4);
+					for (int i = 0; i < 16; i++) {
+						block[i * 4 + 0] = r[i];
+						block[i * 4 + 1] = 0;
+						block[i * 4 + 2] = 0;
+						block[i * 4 + 3] = 255;
+					}
+					break;
+				}
+				case AERON_TEXTURE_FORMAT_BC5_RG_UNORM: {
+					uint8_t rg[32];
+					bcdec_bc5(b, rg, 8);
+					for (int i = 0; i < 16; i++) {
+						block[i * 4 + 0] = rg[i * 2 + 0];
+						block[i * 4 + 1] = rg[i * 2 + 1];
+						block[i * 4 + 2] = 0;
+						block[i * 4 + 3] = 255;
+					}
+					break;
+				}
+				case AERON_TEXTURE_FORMAT_BC6H_RGB_UFLOAT:
+				case AERON_TEXTURE_FORMAT_BC6H_RGB_FLOAT: {
+					uint16_t rgb[16 * 3];
+					bcdec_bc6h_half(b, rgb, 12, fmt == AERON_TEXTURE_FORMAT_BC6H_RGB_FLOAT);
+					uint16_t* o = (uint16_t*)(void*)block;
+					for (int i = 0; i < 16; i++) {
+						o[i * 4 + 0] = rgb[i * 3 + 0];
+						o[i * 4 + 1] = rgb[i * 3 + 1];
+						o[i * 4 + 2] = rgb[i * 3 + 2];
+						o[i * 4 + 3] = 0x3C00; /* 1.0h */
+					}
+					break;
+				}
+				default:
+					memset(block, 0, sizeof block);
+					break;
+			}
+			for (int y = 0; y < 4; y++) {
+				const int py = by * 4 + y;
+				if (py >= h)
+					break;
+				const int px    = bx * 4;
+				const int count = (w - px) < 4 ? (w - px) : 4;
+				memcpy(out + ((size_t)py * (size_t)w + (size_t)px) * (size_t)out_bpp, block + (size_t)y * 4 * out_bpp,
+					   (size_t)count * (size_t)out_bpp);
+			}
+		}
+	}
+}
+
+/* Replaces the levels of a BC-compressed `k` with decoded data. Returns 0
+ * on allocation failure (k is left unchanged). */
+static int bc_fallback_decode(Ktx2* k, const char* path) {
+	AeronTextureFormat out_fmt;
+	int                out_bpp = 4;
+	switch (k->format) {
+		case AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB:
+		case AERON_TEXTURE_FORMAT_BC3_RGBA_SRGB:
+		case AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB:
+			out_fmt = AERON_TEXTURE_FORMAT_RGBA8_SRGB;
+			break;
+		case AERON_TEXTURE_FORMAT_BC6H_RGB_UFLOAT:
+		case AERON_TEXTURE_FORMAT_BC6H_RGB_FLOAT:
+			out_fmt = AERON_TEXTURE_FORMAT_RGBA16_FLOAT;
+			out_bpp = 8;
+			break;
+		default:
+			out_fmt = AERON_TEXTURE_FORMAT_RGBA8_UNORM;
+			break;
+	}
+	const int max_size = bc_fallback_max_size();
+	int       first    = 0;
+	while (first + 1 < k->level_count && (k->levels[first].width > max_size || k->levels[first].height > max_size))
+		first++;
+	const int  count       = k->level_count - first;
+	Ktx2Level* levels      = (Ktx2Level*)calloc((size_t)count, sizeof *levels);
+	uint8_t**  level_owned = (uint8_t**)calloc((size_t)count, sizeof *level_owned);
+	if (!levels || !level_owned) {
+		free(levels);
+		free(level_owned);
+		return 0;
+	}
+	for (int i = 0; i < count; i++) {
+		const Ktx2Level src       = k->levels[first + i];
+		const size_t    face_size = (size_t)src.width * (size_t)src.height * (size_t)out_bpp;
+		uint8_t*        out       = (uint8_t*)malloc(face_size * (size_t)k->face_count);
+		if (!out) {
+			for (int j = 0; j < i; j++)
+				free(level_owned[j]);
+			free(levels);
+			free(level_owned);
+			return 0;
+		}
+		const size_t src_face = src.size / (size_t)k->face_count;
+		for (int face = 0; face < k->face_count; face++) {
+			bc_decode_face(k->format, src.data + (size_t)face * src_face, src.width, src.height,
+						   out + (size_t)face * face_size, out_bpp);
+		}
+		level_owned[i]   = out;
+		levels[i].data   = out;
+		levels[i].size   = face_size * (size_t)k->face_count;
+		levels[i].width  = src.width;
+		levels[i].height = src.height;
+	}
+	static int logged;
+	if (!logged) {
+		logged = 1;
+		Aeron_LogInfo("aeron.scene", "GPU cannot sample BC textures; decoding on load (first: %s, %dx%d -> %dx%d)",
+					  path, k->width, k->height, levels[0].width, levels[0].height);
+	}
+	for (int i = 0; i < k->level_count; i++)
+		free(k->level_owned[i]);
+	free(k->level_owned);
+	free(k->levels);
+	k->levels           = levels;
+	k->level_owned      = level_owned;
+	k->level_count      = count;
+	k->width            = levels[0].width;
+	k->height           = levels[0].height;
+	k->format           = out_fmt;
+	k->block_compressed = false;
+	k->bytes_per_block  = 0;
+	return 1;
 }
 
 Ktx2* ktx2_open(const char* path) {
