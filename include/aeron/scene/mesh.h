@@ -107,6 +107,13 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 
 void AeronScene_MeshDestroy(AeronSceneMesh* mesh);
 
+/* Replaces the vertex stream of `mesh` (same vertex count, same order),
+ * e.g. a mesh skinned on the CPU each frame. Records an upload into `cmd`
+ * (no pass may be open). The retained CPU copy and the bounds are not
+ * updated. Returns 0 on failure. */
+int AeronScene_MeshUpdateVertices(AeronCommandBuffer* cmd, AeronSceneMesh* mesh, const AeronGltfVertex* vertices,
+								  uint32_t vertex_count);
+
 #ifdef __cplusplus
 }
 #endif

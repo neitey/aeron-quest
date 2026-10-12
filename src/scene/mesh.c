@@ -423,3 +423,11 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 	}
 	return s;
 }
+
+int AeronScene_MeshUpdateVertices(AeronCommandBuffer* cmd, AeronSceneMesh* mesh, const AeronGltfVertex* vertices,
+								  uint32_t vertex_count) {
+	if (!cmd || !mesh || !mesh->vbo || !vertices || vertex_count != mesh->vertex_count) {
+		return 0;
+	}
+	return Aeron_UploadBufferDataCmd(cmd, mesh->vbo, 0, vertices, vertex_count * (uint32_t)sizeof(AeronGltfVertex));
+}
