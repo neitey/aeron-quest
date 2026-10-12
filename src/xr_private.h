@@ -47,6 +47,16 @@ typedef struct AeronXr {
 	XrDuration predicted_display_period;
 	XrBool32   should_render;
 	uint64_t   frame_index;
+	/* Performance stats (logged every ~5 s): CPU time from xrWaitFrame return
+	 * to xrEndFrame, frame pacing from predicted display times. */
+	uint64_t perf_frame_start_ns;
+	uint64_t perf_window_start_ns;
+	uint32_t perf_frames;
+	uint32_t perf_stereo_frames;
+	uint32_t perf_late;
+	double   perf_cpu_ms_sum;
+	double   perf_cpu_ms_max;
+	XrTime   perf_last_display_time;
 
 	/* Optional headless capture (AERON_XR_CAPTURE="60,300" + _DIR). */
 	SDL_GPUTransferBuffer* capture_buffer;

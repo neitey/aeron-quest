@@ -207,6 +207,12 @@ typedef struct AeronRuntime {
 	SDL_GPUSampler*             pixel_frame_sampler;
 	SDL_GPUSampler*             pixel_frame_nearest_sampler;
 	SDL_GPUTextureFormat        swapchain_format;
+	/* 0 when presenting only to an XR headset (Quest standalone or
+	 * AERON_XR_HEADLESS=1): no desktop swapchain exists. */
+	int window_claimed;
+	int xr_headless;
+	int xr_headless_width;
+	int xr_headless_height;
 	SDL_GPUSwapchainComposition swapchain_composition;
 	/* HDR output: the mode the app asked for, the mode actually running, and
 	 * the display properties cached from the last HDR-state event. The desired

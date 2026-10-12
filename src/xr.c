@@ -464,6 +464,13 @@ int Aeron_XrWaitAndBeginFrame(void) {
 		Aeron_LogError("aeron.xr", "xrBeginFrame failed: %s", Aeron_XrResultName(result));
 		return -1;
 	}
+	g_xr.perf_frame_start_ns = SDL_GetTicksNS();
+	if (g_xr.perf_last_display_time && frame_state.predictedDisplayPeriod > 0 &&
+		frame_state.predictedDisplayTime - g_xr.perf_last_display_time >
+			frame_state.predictedDisplayPeriod + frame_state.predictedDisplayPeriod / 2) {
+		g_xr.perf_late++; /* the runtime skipped at least one display slot */
+	}
+	g_xr.perf_last_display_time   = frame_state.predictedDisplayTime;
 	g_xr.frame_begun              = 1;
 	g_xr.image_acquired           = 0;
 	g_xr.predicted_display_time   = frame_state.predictedDisplayTime;
@@ -687,6 +694,34 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 	}
 	result           = g_xr.xrEndFrame(g_xr.session, &end_info);
 	g_xr.frame_begun = 0;
+	{
+		const uint64_t now    = SDL_GetTicksNS();
+		const double   cpu_ms = g_xr.perf_frame_start_ns ? (double)(now - g_xr.perf_frame_start_ns) / 1.0e6 : 0.0;
+		if (!g_xr.perf_window_start_ns) {
+			g_xr.perf_window_start_ns = now;
+		}
+		g_xr.perf_frames++;
+		g_xr.perf_stereo_frames += stereo_layers ? 1u : 0u;
+		g_xr.perf_cpu_ms_sum += cpu_ms;
+		if (cpu_ms > g_xr.perf_cpu_ms_max) {
+			g_xr.perf_cpu_ms_max = cpu_ms;
+		}
+		if (now - g_xr.perf_window_start_ns >= 5000000000ull) {
+			const double secs = (double)(now - g_xr.perf_window_start_ns) / 1.0e9;
+			const double hz   = g_xr.predicted_display_period > 0 ? 1.0e9 / (double)g_xr.predicted_display_period : 0.0;
+			Aeron_LogInfo("aeron.xr",
+						  "perf: %.1f fps (display %.0f Hz), frame work avg %.2f ms max %.2f ms, skipped slots %u, "
+						  "%u/%u frames stereo",
+						  (double)g_xr.perf_frames / secs, hz, g_xr.perf_cpu_ms_sum / (double)g_xr.perf_frames,
+						  g_xr.perf_cpu_ms_max, g_xr.perf_late, g_xr.perf_stereo_frames, g_xr.perf_frames);
+			g_xr.perf_window_start_ns = now;
+			g_xr.perf_frames          = 0;
+			g_xr.perf_stereo_frames   = 0;
+			g_xr.perf_late            = 0;
+			g_xr.perf_cpu_ms_sum      = 0.0;
+			g_xr.perf_cpu_ms_max      = 0.0;
+		}
+	}
 	if ((g_xr.frame_index % 300u) == 0u) {
 		Aeron_LogInfo("aeron.xr", "frame %llu: display period %.2f ms, layers %u (%s)",
 					  (unsigned long long)g_xr.frame_index, (double)g_xr.predicted_display_period / 1.0e6,

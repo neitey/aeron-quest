@@ -273,7 +273,10 @@ void Aeron_UpdatePresentationPixelSize(void) {
 	int      pixel_width  = 0;
 	int      pixel_height = 0;
 
-	if (g_aeron.window && SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_width, &pixel_height)) {
+	if (g_aeron.xr_headless && g_aeron.xr_headless_width > 0) {
+		/* The XR virtual screen is the only output surface. */
+		Aeron_ComputePresentationRect(g_aeron.xr_headless_width, g_aeron.xr_headless_height, &content_rect);
+	} else if (g_aeron.window && SDL_GetWindowSizeInPixels(g_aeron.window, &pixel_width, &pixel_height)) {
 		Aeron_ComputePresentationRect(pixel_width, pixel_height, &content_rect);
 	}
 	g_aeron.presentation_pixel_width  = content_rect.w;

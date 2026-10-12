@@ -132,6 +132,10 @@ int32_t Aeron_BeginFrame(void) {
 	Aeron_UpdateControllers(&g_aeron.input);
 	Aeron_UpdatePresentationPixelSize();
 	SDL_GetWindowSize(g_aeron.window, &g_aeron.input.window_width, &g_aeron.input.window_height);
+	if (g_aeron.xr_headless && g_aeron.xr_headless_width > 0) {
+		g_aeron.input.window_width  = g_aeron.xr_headless_width;
+		g_aeron.input.window_height = g_aeron.xr_headless_height;
+	}
 	Aeron_ComputePresentationRect(g_aeron.input.window_width, g_aeron.input.window_height, &content_rect);
 	window_flags            = SDL_GetWindowFlags(g_aeron.window);
 	g_aeron.input.has_focus = (window_flags & SDL_WINDOW_INPUT_FOCUS) != 0;

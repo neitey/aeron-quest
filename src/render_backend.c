@@ -182,6 +182,14 @@ static int Aeron_LoadBuiltinShaders(void) {
  * caller keeps its previous mode on failure), otherwise SDR-linear with a
  * plain-SDR fallback. */
 static int Aeron_ConfigureSwapchain(int hdr) {
+	if (!g_aeron.window_claimed) {
+		/* Headset-only presentation: layer pipelines still key on this format. */
+		g_aeron.swapchain_format      = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
+		g_aeron.swapchain_composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+		g_aeron.hdr_output_enabled    = 0;
+		(void)hdr;
+		return 1;
+	}
 	SDL_GPUSwapchainComposition composition;
 
 	if (hdr) {
@@ -238,6 +246,9 @@ int Aeron_OutputSupportsHdr(void) {
 		return 0;
 	}
 
+	if (!g_aeron.window_claimed) {
+		return 0;
+	}
 	return SDL_WindowSupportsGPUSwapchainComposition(g_aeron.gpu_device, g_aeron.window,
 													 SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR)
 			   ? 1
@@ -293,7 +304,7 @@ static int Aeron_ApplyOutputHdr(void) {
 }
 
 int Aeron_SetOutputHdr(int enabled) {
-	if (!g_aeron.gpu_device || !g_aeron.window) {
+	if (!g_aeron.gpu_device || !g_aeron.window || !g_aeron.window_claimed) {
 		return 0;
 	}
 	g_aeron.hdr_output_desired  = enabled != 0;
@@ -311,7 +322,7 @@ void Aeron_ApplyPendingOutputHdr(void) {
 		return;
 	}
 	g_aeron.hdr_reapply_pending = 0;
-	if (!g_aeron.gpu_device || !g_aeron.window) {
+	if (!g_aeron.gpu_device || !g_aeron.window || !g_aeron.window_claimed) {
 		return;
 	}
 	/* A failed re-evaluation keeps the previous composition, which stays
@@ -1521,11 +1532,29 @@ int Aeron_RenderBackendInit(void) {
 		return 0;
 	}
 
-	if (!SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
+	/* Standalone headsets present only through OpenXR: never create a
+	 * swapchain for the (invisible) Android window. */
+	{
+		const char* headless = SDL_getenv("AERON_XR_HEADLESS");
+#if defined(SDL_PLATFORM_ANDROID)
+		g_aeron.xr_headless = Aeron_XrRequested();
+#else
+		g_aeron.xr_headless = Aeron_XrRequested() && headless && headless[0] == '1';
+#endif
+		if (headless && headless[0] == '0') {
+			g_aeron.xr_headless = 0;
+		}
+	}
+	g_aeron.window_claimed = 0;
+	if (g_aeron.xr_headless) {
+		Aeron_LogInfo("aeron", "XR headless presentation: no desktop swapchain");
+	} else if (!SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
 		Aeron_LogError("aeron", "SDL_ClaimWindowForGPUDevice failed: %s", SDL_GetError());
 		SDL_DestroyGPUDevice(g_aeron.gpu_device);
 		g_aeron.gpu_device = NULL;
 		return 0;
+	} else {
+		g_aeron.window_claimed = 1;
 	}
 
 	/* Seed the HDR cache before the first swapchain so the SDR white level and
@@ -1533,7 +1562,10 @@ int Aeron_RenderBackendInit(void) {
 	Aeron_RefreshOutputHdrProperties();
 
 	if (!Aeron_ConfigureSwapchain(0)) {
-		SDL_ReleaseWindowFromGPUDevice(g_aeron.gpu_device, g_aeron.window);
+		if (g_aeron.window_claimed) {
+			SDL_ReleaseWindowFromGPUDevice(g_aeron.gpu_device, g_aeron.window);
+			g_aeron.window_claimed = 0;
+		}
 		SDL_DestroyGPUDevice(g_aeron.gpu_device);
 		g_aeron.gpu_device = NULL;
 		return 0;
@@ -1554,9 +1586,33 @@ int Aeron_RenderBackendInit(void) {
 	if (Aeron_XrRequested()) {
 		int screen_w = 0;
 		int screen_h = 0;
-		SDL_GetWindowSizeInPixels(g_aeron.window, &screen_w, &screen_h);
+		if (g_aeron.xr_headless) {
+			/* No desktop window to size the virtual screen from. */
+			screen_w = 1920;
+			screen_h = 1080;
+			{
+				const char* px = SDL_getenv("AERON_XR_SCREEN_PIXELS"); /* e.g. 2560x1440 */
+				int w = 0, h = 0;
+				if (px && SDL_sscanf(px, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 200) {
+					screen_w = w;
+					screen_h = h;
+				}
+			}
+			g_aeron.xr_headless_width  = screen_w;
+			g_aeron.xr_headless_height = screen_h;
+		} else {
+			SDL_GetWindowSizeInPixels(g_aeron.window, &screen_w, &screen_h);
+		}
 		if (!Aeron_XrInit(g_aeron.gpu_device, screen_w, screen_h, g_aeron.swapchain_format)) {
 			Aeron_LogWarn("aeron", "OpenXR session setup failed; continuing on the desktop window only");
+			if (g_aeron.xr_headless) {
+				/* Late fallback: present to the window after all (2D panel). */
+				g_aeron.xr_headless = 0;
+				if (SDL_ClaimWindowForGPUDevice(g_aeron.gpu_device, g_aeron.window)) {
+					g_aeron.window_claimed = 1;
+					Aeron_ConfigureSwapchain(0);
+				}
+			}
 		} else if (!Aeron_PipelineForTarget(Aeron_XrScreenFormat(), AERON_LAYER_BLEND_OPAQUE) ||
 				   !Aeron_PipelineForTarget(Aeron_XrScreenFormat(), AERON_LAYER_BLEND_ALPHA)) {
 			Aeron_LogWarn("aeron", "XR composition pipelines failed; continuing without XR");
@@ -1571,6 +1627,7 @@ void Aeron_RenderBackendShutdown(void) {
 	if (g_aeron.gpu_device) {
 		SDL_WaitForGPUIdle(g_aeron.gpu_device);
 		Aeron_XrShutdown();
+
 		Aeron_ReleasePixelLayerUploads();
 
 		for (int i = 0; i < g_aeron.fullscreen_pipeline_count; ++i) {
@@ -1601,9 +1658,10 @@ void Aeron_RenderBackendShutdown(void) {
 			g_aeron.fullscreen_vertex_shader = NULL;
 		}
 
-		if (g_aeron.window) {
+		if (g_aeron.window && g_aeron.window_claimed) {
 			SDL_ReleaseWindowFromGPUDevice(g_aeron.gpu_device, g_aeron.window);
 		}
+		g_aeron.window_claimed = 0;
 
 		SDL_DestroyGPUDevice(g_aeron.gpu_device);
 		g_aeron.gpu_device = NULL;
@@ -1859,7 +1917,8 @@ int Aeron_Present(void) {
 			 * them into the XR swapchains; the desktop window keeps showing
 			 * the ordinary composed layers whenever an image is free. */
 			present_ok = 1;
-			if (SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &mirror, &mirror_w,
+			if (g_aeron.window_claimed &&
+				SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &mirror, &mirror_w,
 											   &mirror_h) &&
 				mirror) {
 				present_ok = Aeron_ComposeLayers(command_buffer, mirror, mirror_w, mirror_h,
@@ -1875,7 +1934,8 @@ int Aeron_Present(void) {
 											 "XR virtual screen");
 			if (present_ok) {
 				Aeron_XrCopyScreenToSwapchain(command_buffer);
-				if (SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &mirror, &mirror_w,
+				if (g_aeron.window_claimed &&
+					SDL_AcquireGPUSwapchainTexture(command_buffer, g_aeron.window, &mirror, &mirror_w,
 												   &mirror_h) &&
 					mirror) {
 					SDL_GPUBlitInfo blit;
@@ -1914,6 +1974,16 @@ int Aeron_Present(void) {
 			return 0;
 		}
 		return Aeron_XrEndFrame(fence);
+	}
+
+	if (!g_aeron.window_claimed) {
+		/* Headset-only and the XR session is not presenting (yet): drop it. */
+		AeronGpuDebug_Pop(command_buffer);
+		SDL_CancelGPUCommandBuffer(command_buffer);
+		if (xr_frame) {
+			Aeron_XrEndFrame(NULL);
+		}
+		return 1;
 	}
 
 	swapchain_texture = NULL;
@@ -1988,6 +2058,11 @@ int Aeron_WaitForPresentationSlot(void) {
 		}
 	}
 
+	if (!g_aeron.window_claimed) {
+		/* No desktop vsync to wait on: idle until the headset session runs. */
+		SDL_Delay(11);
+		return 1;
+	}
 	SDL_ClearError();
 	if (!SDL_WaitForGPUSwapchain(g_aeron.gpu_device, g_aeron.window)) {
 		const char* error = SDL_GetError();
@@ -2094,7 +2169,7 @@ int Aeron_CanRenderDirectToSwapchain(int target_width, int target_height) {
 
 	/* In XR the frame goes through the virtual-screen texture, whose size is
 	 * fixed at session start, so producers render into their own targets. */
-	if (Aeron_XrSessionRunning()) {
+	if (Aeron_XrSessionRunning() || !g_aeron.window_claimed) {
 		return 0;
 	}
 	if (!g_aeron.gpu_device || !g_aeron.window || target_width <= 0 || target_height <= 0 ||
