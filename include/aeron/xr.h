@@ -46,13 +46,13 @@ typedef struct AeronXrStereoFrame {
 	 * the lap): its own target of console_width x console_height, NULL when
 	 * unavailable. Clear to transparent and draw; shown only when committed
 	 * with Aeron_XrStereoCommitConsole. */
-	AeronRenderTarget* console_target;
+	AeronRenderTarget* console_target; /* NULL: use Aeron_XrStereoPanelTarget */
 	int                console_width;
 	int                console_height;
 	/* Card layer: a second panel of the same kind (e.g. a reference card
 	 * the player can pick up), card_width x card_height, NULL when
 	 * unavailable. Shown when committed with Aeron_XrStereoCommitCard. */
-	AeronRenderTarget* card_target;
+	AeronRenderTarget* card_target; /* NULL: use Aeron_XrStereoPanelTarget */
 	int                card_width;
 	int                card_height;
 	/* Beam layer: a small target (beam_width x beam_height) for pointer
@@ -90,7 +90,16 @@ typedef struct AeronXrPanel {
 	float orientation[4]; /* quaternion x, y, z, w */
 	float size[2];        /* width, height in metres */
 	int   source;         /* 0 = hud_target, 1 = hud_aux_target */
+	int   eye;            /* 0 both eyes, 1 left only, 2 right only */
 } AeronXrPanel;
+
+/* Panel layers with their own swapchains (console, card, second card).
+ * They keep showing the last image drawn into them: the game only draws
+ * when something changed (Aeron_XrStereoPanelTarget acquires a fresh image
+ * for this frame), and commits the quads every frame it wants them shown.
+ * Each target is two panels wide, so a panel can be drawn once per eye
+ * (left half, right half) when it differs between the eyes. */
+enum { AERON_XR_PANEL_CONSOLE = 0, AERON_XR_PANEL_CARD = 1, AERON_XR_PANEL_CARD2 = 2, AERON_XR_PANEL_COUNT = 3 };
 
 #define AERON_XR_MAX_PANELS 12
 
@@ -117,6 +126,15 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console);
 /* The same for the card target (all-zero rect = the whole target); drawn
  * under the console. */
 void Aeron_XrStereoCommitCard(const AeronXrPanel* card);
+/* This frame's image of panel layer `which` to draw into (all of it: the
+ * image's earlier content is undefined), and its size. NULL when the layer
+ * is unavailable. Call only when the panel changed; without a call the
+ * layer keeps its last image. */
+AeronRenderTarget* Aeron_XrStereoPanelTarget(int which, int* width, int* height);
+/* After one of the HUD commits: show up to two quads of panel layer
+ * `which` (rects in its target's pixels; panel.eye picks the eye). Cards
+ * are drawn under the console, the console under the beams. */
+void Aeron_XrStereoCommitPanelLayer(int which, const AeronXrPanel* quads, int count);
 /* Up to two pointer beams (rects in beam_target pixels), drawn last. */
 void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count);
 /* The eye targets are a 3D environment around the flat virtual screen:

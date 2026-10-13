@@ -161,6 +161,17 @@ int AeronDrawList_Prepare(AeronDrawList2D* list, AeronCommandBuffer* cmd);
  * `cmd` must have no active pass. */
 void AeronDrawList_Render(AeronDrawList2D* list, AeronCommandBuffer* cmd);
 
+/* Draws the list at (x, y) of its target, which may be larger than the
+ * list's own target_w x target_h (e.g. one panel of a two-panel texture).
+ * Set after Begin; Begin resets it to (0, 0). */
+void AeronDrawList_SetOrigin(AeronDrawList2D* list, int x, int y);
+/* Changes the target recorded by Begin (record first, then decide where or
+ * whether to draw). */
+void AeronDrawList_SetTarget(AeronDrawList2D* list, AeronRenderTarget* target);
+/* A hash of everything recorded since Begin: equal hashes, equal pixels
+ * (for skipping redraws of unchanged panels). */
+uint64_t AeronDrawList_Hash(const AeronDrawList2D* list);
+
 /* Replay an already-prepared generation into an active render pass. The
  * caller owns the pass and supplies its actual target so pipeline format
  * selection remains correct for direct swapchain presentation. The

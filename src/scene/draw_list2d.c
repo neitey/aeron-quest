@@ -372,6 +372,7 @@ struct AeronDrawList2D {
 	int                      target_w, target_h;
 	AeronDrawList2DClearMode clear_mode;
 	float                    clear_rgba[4];
+	int                      origin_x, origin_y; /* where the list lands in the target */
 };
 
 AeronDrawList2D* AeronDrawList_Create(int record_cap) {
@@ -425,6 +426,36 @@ void AeronDrawList_Begin(AeronDrawList2D* l, AeronRenderTarget* target, int targ
 	l->dropped  = 0;
 	l->active   = 1;
 	l->prepared = 0;
+	l->origin_x = 0;
+	l->origin_y = 0;
+}
+
+void AeronDrawList_SetOrigin(AeronDrawList2D* l, int x, int y) {
+	if (l) {
+		l->origin_x = x;
+		l->origin_y = y;
+	}
+}
+
+void AeronDrawList_SetTarget(AeronDrawList2D* l, AeronRenderTarget* target) {
+	if (l) {
+		l->target = target;
+	}
+}
+
+uint64_t AeronDrawList_Hash(const AeronDrawList2D* l) {
+	/* FNV-1a over the recorded draws: equal lists draw equal pixels. */
+	uint64_t h = 1469598103934665603ull;
+	if (!l) {
+		return h;
+	}
+	const unsigned char* b = (const unsigned char*)l->records;
+	const size_t         n = (size_t)l->count * sizeof *l->records;
+	for (size_t i = 0; i < n; ++i) {
+		h = (h ^ b[i]) * 1099511628211ull;
+	}
+	h = (h ^ (uint64_t)l->count) * 1099511628211ull;
+	return h;
 }
 
 static Dl2dRecord* dl2d_alloc(AeronDrawList2D* l) {
@@ -762,9 +793,11 @@ static int dl2d_same_rrect_state(const Dl2dRecord* a, const Dl2dRecord* b) {
 
 static void dl2d_set_scissor(AeronDrawList2D* l, AeronRenderPass* pass, const AeronRectI* scissor) {
 	if (scissor->width > 0 && scissor->height > 0) {
-		Aeron_SetScissor(pass, scissor);
+		const AeronRectI moved = { scissor->x + l->origin_x, scissor->y + l->origin_y, scissor->width,
+								   scissor->height };
+		Aeron_SetScissor(pass, &moved);
 	} else {
-		const AeronRectI full = { 0, 0, l->target_w, l->target_h };
+		const AeronRectI full = { l->origin_x, l->origin_y, l->target_w, l->target_h };
 		Aeron_SetScissor(pass, &full);
 	}
 }
@@ -780,7 +813,8 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass, AeronRend
 		.base_instance    = 0,
 	};
 
-	const AeronRectI full_scissor = { 0, 0, l->target_w, l->target_h };
+	const AeronRectI full_scissor = { l->origin_x, l->origin_y, l->target_w, l->target_h };
+	Aeron_SetViewport(pass, &full_scissor); /* the target may be larger than the list */
 	Aeron_SetScissor(pass, &full_scissor);
 
 	for (int i = 0; i < l->count;) {
