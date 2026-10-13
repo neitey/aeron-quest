@@ -451,6 +451,8 @@ void AeronDrawList_SetTarget(AeronDrawList2D* l, AeronRenderTarget* target) {
 	}
 }
 
+int AeronDrawList_Count(const AeronDrawList2D* l) { return l ? l->count : 0; }
+
 uint64_t AeronDrawList_Hash(const AeronDrawList2D* l) {
 	/* FNV-1a over the recorded draws: equal lists draw equal pixels. */
 	uint64_t h = 1469598103934665603ull;
@@ -766,6 +768,11 @@ int AeronDrawList_Prepare(AeronDrawList2D* l, AeronCommandBuffer* cmd) {
 		} else if (r->kind == DL2D_RRECT) {
 			r->instance_index                       = l->rr_instance_count;
 			l->rr_instances[l->rr_instance_count++] = r->u.rrect;
+			/* The rounded-rect fragment stage measures from SV_Position,
+			 * which is framebuffer-absolute: place the rect where the
+			 * list's origin puts it (drawn with an origin-0 viewport). */
+			l->rr_instances[l->rr_instance_count - 1].dst_x += (float)l->origin_x;
+			l->rr_instances[l->rr_instance_count - 1].dst_y += (float)l->origin_y;
 		}
 	}
 	l->prepared = 0;
@@ -859,10 +866,21 @@ static int draw_list_encode(AeronDrawList2D* l, AeronRenderPass* pass, AeronRend
 			}
 			Blit2DRunUniform run = run_base;
 			run.base_instance    = r->instance_index;
+			const int shifted    = l->origin_x != 0 || l->origin_y != 0;
+			if (shifted) {
+				/* Instances carry the origin (see Prepare). */
+				const AeronRectI vp = { 0, 0, l->origin_x + l->target_w, l->origin_y + l->target_h };
+				Aeron_SetViewport(pass, &vp);
+				run.ndc_scale[0] = 2.0f / (float)vp.width;
+				run.ndc_scale[1] = 2.0f / (float)vp.height;
+			}
 			Aeron_BindGraphicsPipeline(pass, pipe);
 			Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_VERTEX, 0, l->rr_instance_buffer);
 			Aeron_BindUniformData(pass, AERON_SHADER_STAGE_VERTEX, 0, &run, sizeof run);
 			Aeron_DrawInstanced(pass, 4, (uint32_t)(end - i), 0);
+			if (shifted) {
+				Aeron_SetViewport(pass, &full_scissor);
+			}
 			i = end;
 			continue;
 		}

@@ -175,6 +175,9 @@ void AeronDrawList_SetTarget(AeronDrawList2D* list, AeronRenderTarget* target);
  * (for skipping redraws of unchanged panels). */
 uint64_t AeronDrawList_Hash(const AeronDrawList2D* list);
 
+/* Records in the list (0 = nothing to draw). */
+int AeronDrawList_Count(const AeronDrawList2D* list);
+
 /* Replay an already-prepared generation into an active render pass. The
  * caller owns the pass and supplies its actual target so pipeline format
  * selection remains correct for direct swapchain presentation. The
