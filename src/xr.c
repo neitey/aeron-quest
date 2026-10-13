@@ -532,7 +532,7 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 	/* World-locked screen in the LOCAL space (origin = head at session start).
 	 * Defaults give a comfortable cinema-like screen; tunable per user. */
 	g_xr.screen_distance_m      = Aeron_XrEnvFloat("AERON_XR_SCREEN_DISTANCE", 2.1f);
-	g_xr.screen_width_m         = Aeron_XrEnvFloat("AERON_XR_SCREEN_WIDTH", 2.0f);
+	g_xr.screen_width_m         = Aeron_XrEnvFloat("AERON_XR_SCREEN_WIDTH", 2.1f);
 	g_xr.screen_height_offset_m = 0.0f;
 	{
 		const char* offset = SDL_getenv("AERON_XR_SCREEN_HEIGHT_OFFSET");

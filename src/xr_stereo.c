@@ -96,7 +96,9 @@ enum {
 	AERON_XR_SLOT_CARD    = 6,
 	AERON_XR_SLOT_BEAM    = 7,
 	AERON_XR_SLOT_CARD2   = 8,
-	AERON_XR_STEREO_SLOTS = 9 /* 2 eyes + head HUD + world HUD + console + second head HUD + card + beams + card 2 */
+	AERON_XR_SLOT_FRAME   = 9,
+	AERON_XR_STEREO_SLOTS = 10 /* 2 eyes + head HUD + world HUD + console + second head HUD + card + beams + card 2
+								  + screen frame */
 };
 
 /* The console layer (a touch panel near the player's lap) has its own
@@ -246,23 +248,26 @@ int Aeron_XrStereoInit(void) {
 															   "aeron.xr.hud",      "aeron.xr.hud_world",
 															   "aeron.xr.console",  "aeron.xr.hud_aux",
 															   "aeron.xr.card",     "aeron.xr.beam",
-															   "aeron.xr.card2" };
+															   "aeron.xr.card2",    "aeron.xr.frame" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
 		const int             card     = i == AERON_XR_SLOT_CARD || i == AERON_XR_SLOT_CARD2;
+		const int             frame    = i == AERON_XR_SLOT_FRAME;
 		const int             optional = i == AERON_XR_SLOT_CONSOLE || i == AERON_XR_SLOT_HUD_AUX || card ||
-							 i == AERON_XR_SLOT_BEAM;
+							 i == AERON_XR_SLOT_BEAM || frame;
 		const int             hud = i == AERON_XR_SLOT_HUD || i == AERON_XR_SLOT_HUD_WORLD || i == AERON_XR_SLOT_HUD_AUX;
 		g_st.chains[i].width  = i == AERON_XR_SLOT_CONSOLE ? AERON_XR_CONSOLE_WIDTH
+							   : frame                     ? AERON_XR_FRAME_WIDTH
 							   : card                      ? AERON_XR_CARD_WIDTH
 							   : i == AERON_XR_SLOT_BEAM   ? AERON_XR_BEAM_WIDTH
 							   : hud                       ? g_hud_w
 														   : g_st.width;
 		g_st.chains[i].height = i == AERON_XR_SLOT_CONSOLE ? AERON_XR_CONSOLE_HEIGHT
+							   : frame                     ? AERON_XR_FRAME_HEIGHT
 							   : card                      ? AERON_XR_CARD_HEIGHT
 							   : i == AERON_XR_SLOT_BEAM   ? AERON_XR_BEAM_HEIGHT
 							   : hud                       ? g_hud_h
 														   : g_st.height;
-		g_st.chains[i].lazy   = i == AERON_XR_SLOT_CONSOLE || card;
+		g_st.chains[i].lazy   = i == AERON_XR_SLOT_CONSOLE || card || frame;
 		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 		if (g_xr.capture_frame_count > 0) {
 			/* Lets AERON_XR_CAPTURE read images rendered in place. */
@@ -560,6 +565,7 @@ static int Aeron_XrStereoPanelSlot(int which) {
 	return which == AERON_XR_PANEL_CONSOLE ? AERON_XR_SLOT_CONSOLE
 		   : which == AERON_XR_PANEL_CARD  ? AERON_XR_SLOT_CARD
 		   : which == AERON_XR_PANEL_CARD2 ? AERON_XR_SLOT_CARD2
+		   : which == AERON_XR_PANEL_FRAME ? AERON_XR_SLOT_FRAME
 										   : -1;
 }
 
@@ -946,7 +952,7 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 	/* The cards, then the console last: it is the panel the hands reach
 	 * into. */
 	{
-		static const int order[AERON_XR_PANEL_COUNT] = { AERON_XR_PANEL_CARD, AERON_XR_PANEL_CARD2,
+		static const int order[AERON_XR_PANEL_COUNT] = { AERON_XR_PANEL_FRAME, AERON_XR_PANEL_CARD, AERON_XR_PANEL_CARD2,
 														 AERON_XR_PANEL_CONSOLE };
 		for (int o = 0; o < AERON_XR_PANEL_COUNT; ++o) {
 			const int which = order[o];

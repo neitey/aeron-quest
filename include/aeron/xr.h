@@ -101,7 +101,18 @@ typedef struct AeronXrPanel {
  * for this frame), and commits the quads every frame it wants them shown.
  * Each target is two panels wide, so a panel can be drawn once per eye
  * (left half, right half) when it differs between the eyes. */
-enum { AERON_XR_PANEL_CONSOLE = 0, AERON_XR_PANEL_CARD = 1, AERON_XR_PANEL_CARD2 = 2, AERON_XR_PANEL_COUNT = 3 };
+/* AERON_XR_PANEL_FRAME: a static picture composited right over the
+ * virtual screen (e.g. a bezel around it), AERON_XR_FRAME_WIDTH x
+ * AERON_XR_FRAME_HEIGHT, drawn once and kept. */
+enum {
+	AERON_XR_PANEL_CONSOLE = 0,
+	AERON_XR_PANEL_CARD = 1,
+	AERON_XR_PANEL_CARD2 = 2,
+	AERON_XR_PANEL_FRAME = 3,
+	AERON_XR_PANEL_COUNT = 4
+};
+#define AERON_XR_FRAME_WIDTH 1280
+#define AERON_XR_FRAME_HEIGHT 1104
 
 #define AERON_XR_MAX_PANELS 12
 
