@@ -52,6 +52,7 @@ typedef struct AeronSceneMeshCpuVertex {
 
 typedef struct AeronSceneMesh {
 	AeronBuffer* vbo; /* merged AeronGltfVertex stream */
+	int          vbo_dynamic; /* rewritten every frame (MeshUpdateVertices): cycled */
 	AeronBuffer* ibo; /* uint16 indices */
 	uint32_t     vertex_count;
 	uint32_t     index_count;

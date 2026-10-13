@@ -533,7 +533,7 @@ static const int* pbr_draw_order(const struct AeronScene3D* s) {
 		const float  dx = t[3] - s->camera.pos[0];
 		const float  dy = t[7] - s->camera.pos[1];
 		const float  dz = t[11] - s->camera.pos[2];
-		keys[i].d2      = dx * dx + dy * dy + dz * dz;
+		keys[i].d2      = dx * dx + dy * dy + dz * dz - (s->instances[i].draw_first ? 1e30f : 0.0f);
 		keys[i].index   = i;
 	}
 	qsort(keys, (size_t)n, sizeof keys[0], pbr_sort_cmp);

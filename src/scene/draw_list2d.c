@@ -918,8 +918,9 @@ void AeronDrawList_RenderIntoPass(AeronDrawList2D* l, AeronCommandBuffer* cmd, A
 		return;
 	}
 	AeronTexture* texture = Aeron_RenderTargetGetTexture(target);
-	if (!texture || Aeron_TextureGetWidth(texture) != l->target_w ||
-		Aeron_TextureGetHeight(texture) != l->target_h || !blit2d_ensure()) {
+	/* The target may be larger than the list (a list placed at an origin). */
+	if (!texture || Aeron_TextureGetWidth(texture) < l->origin_x + l->target_w ||
+		Aeron_TextureGetHeight(texture) < l->origin_y + l->target_h || !blit2d_ensure()) {
 		Aeron_CommandBufferSetFailure(cmd, "2D draw-list pass preparation failed");
 		return;
 	}

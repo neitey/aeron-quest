@@ -429,5 +429,20 @@ int AeronScene_MeshUpdateVertices(AeronCommandBuffer* cmd, AeronSceneMesh* mesh,
 	if (!cmd || !mesh || !mesh->vbo || !vertices || vertex_count != mesh->vertex_count) {
 		return 0;
 	}
+	if (!mesh->vbo_dynamic) {
+		/* Rewritten every frame: a dynamic buffer is cycled on upload, so
+		 * the GPU never waits for the previous frame to finish reading it. */
+		AeronBuffer* dyn = Aeron_CreateBuffer(&(AeronBufferDesc) {
+			.usage        = AERON_BUFFER_USAGE_VERTEX,
+			.size         = vertex_count * (uint32_t)sizeof(AeronGltfVertex),
+			.memory_usage = AERON_MEMORY_USAGE_DYNAMIC,
+			.debug_name   = "scene.mesh.dynamic_vertices",
+		});
+		if (dyn) {
+			Aeron_DestroyBuffer(mesh->vbo);
+			mesh->vbo = dyn;
+		}
+		mesh->vbo_dynamic = 1;
+	}
 	return Aeron_UploadBufferDataCmd(cmd, mesh->vbo, 0, vertices, vertex_count * (uint32_t)sizeof(AeronGltfVertex));
 }

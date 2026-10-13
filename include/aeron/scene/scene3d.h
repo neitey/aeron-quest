@@ -142,6 +142,11 @@ typedef struct AeronSceneMeshInstance {
 	 * default. A receiver-local shadow map can preserve environment
 	 * shadows while excluding selected casters from selected receivers. */
 	uint8_t shadow_flags;
+	/* With AeronScene_SetOpaqueOrder's sort: draw this instance before all
+	 * others (things right in front of the viewer, e.g. VR hands, whose
+	 * origin is farther than a surrounding cockpit's), so what they hide is
+	 * never shaded. */
+	uint8_t draw_first;
 } AeronSceneMeshInstance;
 
 typedef void (*AeronSceneAfterMeshesFn)(AeronCommandBuffer* cmd, AeronRenderPass* pass,
