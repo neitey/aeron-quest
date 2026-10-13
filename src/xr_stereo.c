@@ -390,6 +390,28 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 				g_st.views[1].pose.position = (XrVector3f) { 0.032f, 0.0f, 0.0f };
 			}
 			g_st.located = 1;
+			{
+				/* For the Vulkan foveation shim (Quest): the eye framebuffer
+				 * size and each eye's optical centre in [-1,1] image
+				 * coordinates (+y down), once. */
+				static int published;
+				if (!published) {
+					char text[160];
+					float c[2][2];
+					for (int e = 0; e < 2; ++e) {
+						const XrFovf f  = g_st.views[e].fov;
+						const float  tl = tanf(f.angleLeft), tr = tanf(f.angleRight);
+						const float  tu = tanf(f.angleUp), td = tanf(f.angleDown);
+						c[e][0]         = tr - tl > 1e-4f ? -(tr + tl) / (tr - tl) : 0.0f;
+						c[e][1]         = tu - td > 1e-4f ? (tu + td) / (tu - td) : 0.0f;
+					}
+					SDL_snprintf(text, sizeof text, "%d %d %.4f %.4f %.4f %.4f", g_st.width, g_st.height,
+								 (double)c[0][0], (double)c[0][1], (double)c[1][0], (double)c[1][1]);
+					SDL_setenv_unsafe("OPENXWA_FOVEATION_EYE", text, 1);
+					Aeron_LogInfo("aeron.xr", "eye optical centres: %s", text);
+					published = 1;
+				}
+			}
 		}
 	}
 	if (!g_st.located) {
