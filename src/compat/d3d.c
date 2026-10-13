@@ -1666,7 +1666,13 @@ static HRESULT AERON_DXAPI D3DDevice_BeginScene(IDirect3DDevice* self) {
 static HRESULT AERON_DXAPI D3DDevice_EndScene(IDirect3DDevice* self) {
 	D3DDeviceShim* d = (D3DDeviceShim*)self;
 	if (!d->scene_active) {
-		Aeron_RequestFatalRendererError("Direct3D scene end");
+		/* Like D3D (D3DERR_SCENE_NOT_IN_SCENE): an error the caller may
+		 * ignore, not a broken renderer. XWA only logs it. */
+		static int warned;
+		if (!warned) {
+			warned = 1;
+			Aeron_LogWarn("aeron.dx5", "EndScene without BeginScene ignored");
+		}
 		return DX_E_FAIL;
 	}
 	if (!D3DCompat_FlushSceneSegment(d)) {
