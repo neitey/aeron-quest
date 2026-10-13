@@ -35,6 +35,9 @@ void AeronScene_MeshDestroy(AeronSceneMesh* m) {
 	if (!m) {
 		return;
 	}
+	if (m->vbo_retired) {
+		Aeron_DestroyBuffer(m->vbo_retired);
+	}
 	if (m->vbo) {
 		Aeron_DestroyBuffer(m->vbo);
 	}
@@ -439,8 +442,10 @@ int AeronScene_MeshUpdateVertices(AeronCommandBuffer* cmd, AeronSceneMesh* mesh,
 			.debug_name   = "scene.mesh.dynamic_vertices",
 		});
 		if (dyn) {
-			Aeron_DestroyBuffer(mesh->vbo);
-			mesh->vbo = dyn;
+			/* Not freed yet: the command buffer may already track a write to
+			 * it, and a new buffer at the same address would inherit that. */
+			mesh->vbo_retired = mesh->vbo;
+			mesh->vbo         = dyn;
 		}
 		mesh->vbo_dynamic = 1;
 	}
