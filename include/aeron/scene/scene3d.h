@@ -347,6 +347,13 @@ void AeronScene_SetClearColor(AeronScene3D* scene, const float rgba[4]);
 void AeronScene_SetSkyCube(AeronScene3D* scene, AeronTexture* cube, const float world_to_cube[9],
 						   float exposure);
 
+/* Overdraw control. `sky_last`: draw the sky cube, the BEFORE_OPAQUE hook
+ * and SKY billboards after the opaque meshes instead of before them, so
+ * the far-plane depth test rejects the sky behind near geometry (the
+ * hook's draws must depth-test GE against the far plane too). `sort`:
+ * draw opaque mesh instances nearest first. Same image either way. */
+void AeronScene_SetOpaqueOrder(AeronScene3D* scene, int sky_last, int sort);
+
 void AeronScene_SetPassHook(AeronScene3D* scene, AeronScenePassSlot slot, AeronScenePassHookFn fn,
 							void* user);
 

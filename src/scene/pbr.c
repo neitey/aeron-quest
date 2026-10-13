@@ -22,6 +22,7 @@
 
 #include "internal.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 /* Per-instance VS cbuffer (b0 space1) — mirrors `cbuffer
@@ -502,6 +503,46 @@ static void pbr_bind_material_resources(AeronRenderPass* pass, const AeronSceneM
 	Aeron_BindStorageBuffer(pass, AERON_SHADER_STAGE_FRAGMENT, 1, mesh->variant_buffer);
 }
 
+/* Opaque draw order when s->opaque_sort: nearest instance origin first, so
+ * the cockpit, hands and stick fill depth before the world behind them and
+ * early depth rejection skips the hidden fragments. Ties keep submission
+ * order. NULL = submission order. */
+typedef struct PbrSortKey {
+	float d2;
+	int   index;
+} PbrSortKey;
+
+static int pbr_sort_cmp(const void* a, const void* b) {
+	const PbrSortKey* x = (const PbrSortKey*)a;
+	const PbrSortKey* y = (const PbrSortKey*)b;
+	if (x->d2 != y->d2) {
+		return x->d2 < y->d2 ? -1 : 1;
+	}
+	return x->index - y->index;
+}
+
+static const int* pbr_draw_order(const struct AeronScene3D* s) {
+	static PbrSortKey keys[AERON_SCENE_MAX_INSTANCES];
+	static int        order[AERON_SCENE_MAX_INSTANCES];
+	const int         n = s->instance_count;
+	if (!s->opaque_sort || n < 2) {
+		return NULL;
+	}
+	for (int i = 0; i < n; ++i) {
+		const float* t  = s->instances[i].transform; /* row-major: translation in column 3 */
+		const float  dx = t[3] - s->camera.pos[0];
+		const float  dy = t[7] - s->camera.pos[1];
+		const float  dz = t[11] - s->camera.pos[2];
+		keys[i].d2      = dx * dx + dy * dy + dz * dz;
+		keys[i].index   = i;
+	}
+	qsort(keys, (size_t)n, sizeof keys[0], pbr_sort_cmp);
+	for (int i = 0; i < n; ++i) {
+		order[i] = keys[i].index;
+	}
+	return order;
+}
+
 int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass,
 								int pipe_kind, int depth_only, int velocity, AeronTexture* ao_tex) {
 	(void)cmd;
@@ -535,7 +576,9 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 
 	const AeronSceneMesh* bound_mesh                  = NULL;
 	int                   bound_receiver_local_shadow = 0;
-	for (int i = 0; i < s->instance_count; ++i) {
+	const int*            order                       = pbr_draw_order(s);
+	for (int k = 0; k < s->instance_count; ++k) {
+		const int                     i  = order ? order[k] : k;
 		const AeronSceneMeshInstance* in = &s->instances[i];
 		const AeronSceneMesh*         m  = in->mesh;
 		if (!m || !m->vbo || !m->ibo || m->index_count == 0) {
@@ -591,7 +634,8 @@ int AeronScenePbr_DrawInstances(struct AeronScene3D* s, AeronCommandBuffer* cmd,
 		bound_mesh                           = NULL;
 		bound_cull                           = AERON_CULL_NONE;
 		AeronGraphicsPipeline* mask_pipeline = NULL;
-		for (int i = 0; i < s->instance_count; ++i) {
+		for (int k = 0; k < s->instance_count; ++k) {
+			const int                     i  = order ? order[k] : k;
 			const AeronSceneMeshInstance* in = &s->instances[i];
 			const AeronSceneMesh*         m  = in->mesh;
 			if (!m || !m->vbo || !m->ibo || m->mask_index_count == 0) {

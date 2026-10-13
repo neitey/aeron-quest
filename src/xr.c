@@ -129,11 +129,152 @@ static float Aeron_XrEnvFloat(const char* name, float fallback) {
 	return fallback;
 }
 
+/* The optional instance extensions this runtime offers. Enabling one it
+ * lacks would fail instance creation, so ask the loader first. */
+static void Aeron_XrPickExtensions(void) {
+	static const char* const wanted[] = {
+		XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME,
+		XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME,
+	};
+	PFN_xrEnumerateInstanceExtensionProperties enumerate = NULL;
+	PFN_xrGetInstanceProcAddr                  gipa;
+	XrExtensionProperties*                     props;
+	uint32_t                                   count = 0;
+	size_t                                     w;
+
+	if (!SDL_OpenXR_LoadLibrary()) {
+		return;
+	}
+	/* The Khronos loader exports the global functions; the runtime-negotiated
+	 * xrGetInstanceProcAddr may not serve them before an instance exists. */
+	{
+		static const char* const names[] = { "libopenxr_loader.so", "libopenxr_loader.so.1", "openxr_loader.dll" };
+		size_t                   n;
+		for (n = 0; n < SDL_arraysize(names) && !enumerate; ++n) {
+			SDL_SharedObject* lib = SDL_LoadObject(names[n]);
+			if (lib) {
+				enumerate = (PFN_xrEnumerateInstanceExtensionProperties)SDL_LoadFunction(
+					lib, "xrEnumerateInstanceExtensionProperties");
+			}
+		}
+	}
+	gipa = (PFN_xrGetInstanceProcAddr)SDL_OpenXR_GetXrGetInstanceProcAddr();
+	if (!enumerate && gipa) {
+		gipa(XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties", (PFN_xrVoidFunction*)&enumerate);
+	}
+	if (!enumerate || XR_FAILED(enumerate(NULL, 0, &count, NULL)) || count == 0) {
+		Aeron_LogWarn("aeron.xr", "cannot list OpenXR extensions; optional ones stay off");
+		return;
+	}
+	props = (XrExtensionProperties*)SDL_calloc(count, sizeof *props);
+	if (!props) {
+		return;
+	}
+	for (uint32_t i = 0; i < count; ++i) {
+		props[i].type = XR_TYPE_EXTENSION_PROPERTIES;
+	}
+	if (XR_SUCCEEDED(enumerate(NULL, count, &count, props))) {
+		for (w = 0; w < SDL_arraysize(wanted); ++w) {
+			for (uint32_t i = 0; i < count; ++i) {
+				if (strcmp(props[i].extensionName, wanted[w]) == 0) {
+					g_xr.extensions[g_xr.extension_count++] = wanted[w];
+					break;
+				}
+			}
+		}
+	}
+	SDL_free(props);
+	for (uint32_t i = 0; i < g_xr.extension_count; ++i) {
+		if (strcmp(g_xr.extensions[i], XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME) == 0) {
+			g_xr.has_perf_settings = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0) {
+			g_xr.has_refresh_rate = 1;
+		}
+		Aeron_LogInfo("aeron.xr", "enabling %s", g_xr.extensions[i]);
+	}
+}
+
+/* AERON_XR_PERF_LEVEL: 0 (leave it to the runtime), low, high (default),
+ * boost. Sets the floor of the headset's CPU/GPU clock levels. */
+static void Aeron_XrApplyPerfLevel(void) {
+	const char*              env   = SDL_getenv("AERON_XR_PERF_LEVEL");
+	XrPerfSettingsLevelEXT   level = XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT;
+	if (!g_xr.has_perf_settings || !g_xr.xrPerfSettingsSetPerformanceLevelEXT) {
+		return;
+	}
+	if (env && env[0]) {
+		if (strcmp(env, "0") == 0 || SDL_strcasecmp(env, "off") == 0) {
+			return;
+		} else if (SDL_strcasecmp(env, "low") == 0) {
+			level = XR_PERF_SETTINGS_LEVEL_SUSTAINED_LOW_EXT;
+		} else if (SDL_strcasecmp(env, "boost") == 0) {
+			level = XR_PERF_SETTINGS_LEVEL_BOOST_EXT;
+		}
+	}
+	{
+		const XrResult gpu = g_xr.xrPerfSettingsSetPerformanceLevelEXT(g_xr.session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, level);
+		const XrResult cpu = g_xr.xrPerfSettingsSetPerformanceLevelEXT(g_xr.session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, level);
+		Aeron_LogInfo("aeron.xr", "performance level %d: GPU %s, CPU %s", (int)level, Aeron_XrResultName(gpu),
+					  Aeron_XrResultName(cpu));
+	}
+}
+
+/* AERON_XR_REFRESH_RATE: display rate in Hz (0 = the headset's setting).
+ * The nearest offered rate is used. */
+static void Aeron_XrApplyRefreshRate(void) {
+	const char* env = SDL_getenv("AERON_XR_REFRESH_RATE");
+	float       want = env && env[0] ? (float)SDL_atof(env) : 0.0f;
+	float       rates[16];
+	uint32_t    count = 0;
+	float       best  = 0.0f;
+	if (want <= 0.0f || !g_xr.has_refresh_rate || !g_xr.xrEnumerateDisplayRefreshRatesFB ||
+		!g_xr.xrRequestDisplayRefreshRateFB) {
+		return;
+	}
+	if (XR_FAILED(g_xr.xrEnumerateDisplayRefreshRatesFB(g_xr.session, 16, &count, rates)) || count == 0) {
+		return;
+	}
+	for (uint32_t i = 0; i < count; ++i) {
+		if (best == 0.0f || SDL_fabsf(rates[i] - want) < SDL_fabsf(best - want)) {
+			best = rates[i];
+		}
+	}
+	Aeron_LogInfo("aeron.xr", "display refresh %.0f Hz requested: %s", best,
+				  Aeron_XrResultName(g_xr.xrRequestDisplayRefreshRateFB(g_xr.session, best)));
+}
+
+/* Re-applies the two settings above when their variables change (the VR
+ * options write them while the session runs). */
+static char g_perf_applied[32];
+static char g_refresh_applied[32];
+static int  g_settings_dirty = 1;
+
+static void Aeron_XrSyncSettings(void) {
+	const char* perf    = SDL_getenv("AERON_XR_PERF_LEVEL");
+	const char* refresh = SDL_getenv("AERON_XR_REFRESH_RATE");
+	perf                = perf ? perf : "";
+	refresh             = refresh ? refresh : "";
+	if (g_settings_dirty || strcmp(perf, g_perf_applied) != 0) {
+		SDL_strlcpy(g_perf_applied, perf, sizeof g_perf_applied);
+		Aeron_XrApplyPerfLevel();
+	}
+	if (g_settings_dirty || strcmp(refresh, g_refresh_applied) != 0) {
+		SDL_strlcpy(g_refresh_applied, refresh, sizeof g_refresh_applied);
+		Aeron_XrApplyRefreshRate();
+	}
+	g_settings_dirty = 0;
+}
+
 int Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties) {
 	if (!Aeron_XrRequested()) {
 		return 0;
 	}
 	SDL_zero(g_xr);
+	Aeron_XrPickExtensions();
+	if (g_xr.extension_count) {
+		SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER, g_xr.extension_count);
+		SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_NAMES_POINTER, (void*)g_xr.extensions);
+	}
 	return SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_ENABLE_BOOLEAN, true) &&
 		   SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_INSTANCE_POINTER,
 								  &g_xr.instance) &&
@@ -192,6 +333,18 @@ static int Aeron_XrLoadFunctions(void) {
 	AERON_XR_LOAD(xrEnumerateViewConfigurationViews);
 	AERON_XR_LOAD(xrLocateViews);
 #undef AERON_XR_LOAD
+#define AERON_XR_LOAD_OPTIONAL(fn)                                                                           \
+	if (XR_FAILED(g_xr.xrGetInstanceProcAddr(g_xr.instance, #fn, (PFN_xrVoidFunction*)&g_xr.fn))) {          \
+		g_xr.fn = NULL;                                                                                      \
+	}
+	if (g_xr.has_perf_settings) {
+		AERON_XR_LOAD_OPTIONAL(xrPerfSettingsSetPerformanceLevelEXT);
+	}
+	if (g_xr.has_refresh_rate) {
+		AERON_XR_LOAD_OPTIONAL(xrEnumerateDisplayRefreshRatesFB);
+		AERON_XR_LOAD_OPTIONAL(xrRequestDisplayRefreshRateFB);
+	}
+#undef AERON_XR_LOAD_OPTIONAL
 	return 1;
 }
 
@@ -425,6 +578,7 @@ int Aeron_XrPollEvents(void) {
 				if (XR_SUCCEEDED(result)) {
 					g_xr.session_running = 1;
 					Aeron_LogInfo("aeron.xr", "session running");
+					g_settings_dirty = 1;
 				} else {
 					Aeron_LogError("aeron.xr", "xrBeginSession failed: %s", Aeron_XrResultName(result));
 				}
@@ -442,6 +596,9 @@ int Aeron_XrPollEvents(void) {
 		}
 		event.type = XR_TYPE_EVENT_DATA_BUFFER;
 		event.next = NULL;
+	}
+	if (g_xr.session_running) {
+		Aeron_XrSyncSettings();
 	}
 	return !g_xr.exit_requested;
 }

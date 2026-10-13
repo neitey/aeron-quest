@@ -106,6 +106,15 @@ typedef struct AeronXr {
 	/* Stereo (xr_stereo.c) */
 	PFN_xrEnumerateViewConfigurationViews xrEnumerateViewConfigurationViews;
 	PFN_xrLocateViews                     xrLocateViews;
+
+	/* Optional extensions, enabled only when the runtime offers them. */
+	const char* extensions[4];
+	uint32_t    extension_count;
+	int         has_perf_settings;   /* XR_EXT_performance_settings */
+	int         has_refresh_rate;    /* XR_FB_display_refresh_rate */
+	PFN_xrPerfSettingsSetPerformanceLevelEXT xrPerfSettingsSetPerformanceLevelEXT;
+	PFN_xrEnumerateDisplayRefreshRatesFB     xrEnumerateDisplayRefreshRatesFB;
+	PFN_xrRequestDisplayRefreshRateFB        xrRequestDisplayRefreshRateFB;
 } AeronXr;
 
 extern AeronXr g_xr;

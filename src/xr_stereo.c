@@ -172,6 +172,11 @@ typedef struct AeronXrStereo {
 
 static AeronXrStereo g_st;
 
+/* HUD targets (head, world, aux): eye size up to AERON_XR_HUD_RESOLUTION x
+ * the recommended size, so a higher eye resolution does not also make the
+ * three HUD images (cleared and written every frame) more expensive. */
+static int g_hud_w, g_hud_h;
+
 int Aeron_XrStereoInit(void) {
 	XrViewConfigurationView configs[AERON_XR_EYE_COUNT];
 	uint32_t                count = 0;
@@ -211,6 +216,25 @@ int Aeron_XrStereoInit(void) {
 	if (g_st.height > (int)configs[0].maxImageRectHeight) {
 		g_st.height = (int)configs[0].maxImageRectHeight;
 	}
+	{
+		/* Default cap: the Quest default eye scale; on PC no cap (a desktop
+		 * mirror draws the flat HUD at the eye size). */
+#if defined(SDL_PLATFORM_ANDROID)
+		float       cap = 0.9f;
+#else
+		float       cap = 100.0f;
+#endif
+		const char* h   = SDL_getenv("AERON_XR_HUD_RESOLUTION");
+		if (h && h[0] && SDL_atof(h) > 0.1) {
+			cap = (float)SDL_atof(h);
+		}
+		g_hud_w = g_st.width;
+		g_hud_h = g_st.height;
+		if (scale > cap) {
+			g_hud_w = (int)((float)g_st.width * cap / scale + 0.5f);
+			g_hud_h = (int)((float)g_st.height * cap / scale + 0.5f);
+		}
+	}
 	g_st.format = Aeron_FromSdlTextureFormat(g_xr.screen_format);
 	if (g_st.width <= 0 || g_st.height <= 0 || g_st.format == AERON_TEXTURE_FORMAT_UNKNOWN) {
 		Aeron_LogWarn("aeron.xr", "stereo disabled: unusable eye size/format");
@@ -227,13 +251,16 @@ int Aeron_XrStereoInit(void) {
 		const int             card     = i == AERON_XR_SLOT_CARD || i == AERON_XR_SLOT_CARD2;
 		const int             optional = i == AERON_XR_SLOT_CONSOLE || i == AERON_XR_SLOT_HUD_AUX || card ||
 							 i == AERON_XR_SLOT_BEAM;
+		const int             hud = i == AERON_XR_SLOT_HUD || i == AERON_XR_SLOT_HUD_WORLD || i == AERON_XR_SLOT_HUD_AUX;
 		g_st.chains[i].width  = i == AERON_XR_SLOT_CONSOLE ? AERON_XR_CONSOLE_WIDTH
 							   : card                      ? AERON_XR_CARD_WIDTH
 							   : i == AERON_XR_SLOT_BEAM   ? AERON_XR_BEAM_WIDTH
+							   : hud                       ? g_hud_w
 														   : g_st.width;
 		g_st.chains[i].height = i == AERON_XR_SLOT_CONSOLE ? AERON_XR_CONSOLE_HEIGHT
 							   : card                      ? AERON_XR_CARD_HEIGHT
 							   : i == AERON_XR_SLOT_BEAM   ? AERON_XR_BEAM_HEIGHT
+							   : hud                       ? g_hud_h
 														   : g_st.height;
 		g_st.chains[i].lazy   = i == AERON_XR_SLOT_CONSOLE || card;
 		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
@@ -306,8 +333,8 @@ int Aeron_XrStereoInit(void) {
 			g_st.direct = 0;
 		}
 	}
-	Aeron_LogInfo("aeron.xr", "stereo ready: %dx%d per eye (recommended %ux%u, scale %.2f), %s", g_st.width,
-				  g_st.height, configs[0].recommendedImageRectWidth, configs[0].recommendedImageRectHeight,
+	Aeron_LogInfo("aeron.xr", "stereo ready: %dx%d per eye, HUD %dx%d (recommended %ux%u, scale %.2f), %s", g_st.width,
+				  g_st.height, g_hud_w, g_hud_h, configs[0].recommendedImageRectWidth, configs[0].recommendedImageRectHeight,
 				  (double)scale, g_st.direct ? "rendering into swapchain images" : "copying to swapchain images");
 	return 1;
 }
@@ -434,6 +461,8 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 	}
 	out->width      = g_st.width;
 	out->height     = g_st.height;
+	out->hud_width  = g_hud_w;
+	out->hud_height = g_hud_h;
 	out->format     = g_st.format;
 	return 1;
 }
@@ -475,11 +504,11 @@ void Aeron_XrStereoCommitPanels(const AeronXrHudQuad* hud_world, const AeronXrPa
 		int y = p->rect[1] < 0 ? 0 : p->rect[1];
 		int r = p->rect[0] + p->rect[2];
 		int b = p->rect[1] + p->rect[3];
-		if (r > g_st.width) {
-			r = g_st.width;
+		if (r > g_hud_w) {
+			r = g_hud_w;
 		}
-		if (b > g_st.height) {
-			b = g_st.height;
+		if (b > g_hud_h) {
+			b = g_hud_h;
 		}
 		if (r - x < 2 || b - y < 2 || p->size[0] <= 0.0f || p->size[1] <= 0.0f ||
 			(p->source == 1 && !g_st.chains[AERON_XR_SLOT_HUD_AUX].swapchain)) {
@@ -789,8 +818,8 @@ static void Aeron_XrFillQuad(XrCompositionLayerQuad* quad, int slot, const Aeron
 	quad->space                            = g_xr.local_space;
 	quad->eyeVisibility                    = XR_EYE_VISIBILITY_BOTH;
 	quad->subImage.swapchain               = g_st.chains[slot].swapchain;
-	quad->subImage.imageRect.extent.width  = g_st.width;
-	quad->subImage.imageRect.extent.height = g_st.height;
+	quad->subImage.imageRect.extent.width  = g_st.chains[slot].width;
+	quad->subImage.imageRect.extent.height = g_st.chains[slot].height;
 	if (hud->head_locked) {
 		quad->pose = Aeron_XrHudFollowPose(hud);
 	} else {

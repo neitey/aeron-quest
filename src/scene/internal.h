@@ -431,6 +431,10 @@ struct AeronScene3D {
 	 * write-masked vs single target). */
 	AeronTexture*          sky_cube; /* borrowed for the frame; NULL = no sky */
 	float                  sky_world_to_cube[9];
+	/* AeronScene_SetOpaqueOrder: draw the sky layers after the opaque
+	 * meshes (depth-tested at the far plane) and the meshes near to far. */
+	int                    sky_last;
+	int                    opaque_sort;
 	float                  sky_exposure;
 	int                    sky_tried;
 	AeronShader*           sky_vs;

@@ -750,6 +750,13 @@ void AeronScene_SetClearColor(AeronScene3D* s, const float rgba[4]) {
 	}
 }
 
+void AeronScene_SetOpaqueOrder(AeronScene3D* s, int sky_last, int sort) {
+	if (s) {
+		s->sky_last    = sky_last ? 1 : 0;
+		s->opaque_sort = sort ? 1 : 0;
+	}
+}
+
 void AeronScene_SetSkyCube(AeronScene3D* s, AeronTexture* cube, const float world_to_cube[9],
 						   float exposure) {
 	if (!s) {
@@ -1311,6 +1318,20 @@ void AeronSceneStorage_Release(AeronScene3D* s) {
 	s->cluster_light_staging = NULL;
 }
 
+/* Sky cube, BEFORE_OPAQUE hook and SKY billboards: everything at the far
+ * plane. Leaves the frame uniforms bound. */
+static int scene_draw_sky_layers(AeronScene3D* s, AeronCommandBuffer* cmd, AeronRenderPass* pass) {
+	Aeron_GpuDebugMarker(cmd, "Sky cube");
+	if (!scene_draw_sky(s, pass)) {
+		return 0;
+	}
+	run_hook(s, AERON_SCENE_HOOK_BEFORE_OPAQUE, cmd, pass);
+	scene_bind_frame_uniforms(s, pass);
+	Aeron_GpuDebugMarker(cmd, "Sky billboards");
+	AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
+	return 1;
+}
+
 static int scene_render_failure(AeronScene3D* s, AeronCommandBuffer* cmd, const char* message) {
 	if (s) {
 		s->scene_rt_out          = NULL;
@@ -1613,21 +1634,23 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene forward pass creation failed");
 		}
-		Aeron_GpuDebugMarker(cmd, "Sky cube");
-		if (!scene_draw_sky(s, pass)) {
+		if (!s->sky_last && !scene_draw_sky_layers(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}
-		run_hook(s, AERON_SCENE_HOOK_BEFORE_OPAQUE, cmd, pass);
-		scene_bind_frame_uniforms(s, pass);
-		Aeron_GpuDebugMarker(cmd, "Sky billboards");
-		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
+		if (s->sky_last) {
+			scene_bind_frame_uniforms(s, pass);
+		}
 		Aeron_GpuDebugMarker(cmd, "PBR forward instances");
 		if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_FORWARD, /*depth_only=*/0,
 										 /*velocity=*/0,
 										 ssao_active ? Aeron_RenderTargetGetTexture(s->ao_rt) : NULL)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR forward recording failed");
+		}
+		if (s->sky_last && !scene_draw_sky_layers(s, cmd, pass)) {
+			Aeron_EndRenderPass(pass);
+			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}
 		run_hook(s, AERON_SCENE_HOOK_AFTER_OPAQUE, cmd, pass);
 		Aeron_GpuDebugMarker(cmd, "Mesh overlays");
@@ -1698,15 +1721,13 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene main pass creation failed");
 		}
-		Aeron_GpuDebugMarker(cmd, "Sky cube");
-		if (!scene_draw_sky(s, pass)) {
+		if (!s->sky_last && !scene_draw_sky_layers(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}
-		run_hook(s, AERON_SCENE_HOOK_BEFORE_OPAQUE, cmd, pass);
-		scene_bind_frame_uniforms(s, pass);
-		Aeron_GpuDebugMarker(cmd, "Sky billboards");
-		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_SKY);
+		if (s->sky_last) {
+			scene_bind_frame_uniforms(s, pass);
+		}
 		if (pbr_ok) {
 			Aeron_GpuDebugMarker(cmd, "PBR instances");
 			if (!AeronScenePbr_DrawInstances(s, cmd, pass, AERON_PBR_PIPE_MESH,
@@ -1714,6 +1735,10 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 				Aeron_EndRenderPass(pass);
 				return scene_render_failure(s, cmd, "Scene PBR mesh recording failed");
 			}
+		}
+		if (s->sky_last && !scene_draw_sky_layers(s, cmd, pass)) {
+			Aeron_EndRenderPass(pass);
+			return scene_render_failure(s, cmd, "Scene sky recording failed");
 		}
 		run_hook(s, AERON_SCENE_HOOK_AFTER_OPAQUE, cmd, pass);
 		Aeron_GpuDebugMarker(cmd, "Mesh overlays");

@@ -34,7 +34,9 @@ typedef struct AeronXrStereoFrame {
 	int                height;
 	AeronTextureFormat format;         /* eye/HUD target format (sRGB or float) */
 	AeronRenderTarget* eye_targets[2]; /* write final display-ready colour here */
-	AeronRenderTarget* hud_target;     /* same size; clear to transparent, draw HUD */
+	AeronRenderTarget* hud_target;     /* hud_width x hud_height; clear to transparent, draw HUD */
+	int                hud_width;      /* HUD targets' size: the eye's aspect, at most the eye size */
+	int                hud_height;
 	/* Second HUD layer for elements that belong to the world (reticle,
 	 * target brackets), shown behind hud_target. Same size and use. */
 	AeronRenderTarget* hud_world_target;
