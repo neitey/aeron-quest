@@ -105,6 +105,11 @@ enum { AERON_XR_PANEL_CONSOLE = 0, AERON_XR_PANEL_CARD = 1, AERON_XR_PANEL_CARD2
 
 #define AERON_XR_MAX_PANELS 12
 
+/* The world-locked virtual screen in the LOCAL space: distance ahead,
+ * width and height (the quad, its pixel aspect) and the height offset, in
+ * metres. Returns 0 while there is no XR screen. */
+int Aeron_XrVirtualScreenGeometry(float* distance_m, float* width_m, float* height_m, float* height_offset_m);
+
 /* Returns 1 and fills `out` when this host frame can be rendered in stereo
  * (session focused/visible, frame begun, runtime wants content, views
  * tracked). Safe to call more than once per frame. */

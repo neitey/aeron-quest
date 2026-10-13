@@ -77,6 +77,14 @@ void Aeron_XrScreenSize(int* w, int* h) {
 		*h = 0;
 }
 
+int Aeron_XrVirtualScreenGeometry(float* d, float* w, float* h, float* o) {
+	(void)d;
+	(void)w;
+	(void)h;
+	(void)o;
+	return 0;
+}
+
 int Aeron_XrCopyScreenToSwapchain(SDL_GPUCommandBuffer* c) {
 	(void)c;
 	return 0;
@@ -503,8 +511,8 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 
 	/* World-locked screen in the LOCAL space (origin = head at session start).
 	 * Defaults give a comfortable cinema-like screen; tunable per user. */
-	g_xr.screen_distance_m      = Aeron_XrEnvFloat("AERON_XR_SCREEN_DISTANCE", 1.6f);
-	g_xr.screen_width_m         = Aeron_XrEnvFloat("AERON_XR_SCREEN_WIDTH", 2.0f);
+	g_xr.screen_distance_m      = Aeron_XrEnvFloat("AERON_XR_SCREEN_DISTANCE", 2.1f);
+	g_xr.screen_width_m         = Aeron_XrEnvFloat("AERON_XR_SCREEN_WIDTH", 2.625f);
 	g_xr.screen_height_offset_m = 0.0f;
 	{
 		const char* offset = SDL_getenv("AERON_XR_SCREEN_HEIGHT_OFFSET");
@@ -655,6 +663,21 @@ void Aeron_XrScreenSize(int* width, int* height) {
 		*width = g_xr.screen_width;
 	if (height)
 		*height = g_xr.screen_height;
+}
+
+int Aeron_XrVirtualScreenGeometry(float* distance_m, float* width_m, float* height_m, float* height_offset_m) {
+	if (!g_xr.screen_width || !g_xr.screen_height) {
+		return 0;
+	}
+	if (distance_m)
+		*distance_m = g_xr.screen_distance_m;
+	if (width_m)
+		*width_m = g_xr.screen_width_m;
+	if (height_m)
+		*height_m = g_xr.screen_width_m * (float)g_xr.screen_height / (float)g_xr.screen_width;
+	if (height_offset_m)
+		*height_offset_m = g_xr.screen_height_offset_m;
+	return 1;
 }
 
 int Aeron_XrCopyScreenToSwapchain(SDL_GPUCommandBuffer* command_buffer) {
