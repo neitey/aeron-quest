@@ -882,6 +882,15 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 					memset(mapped.right_stick, 0, sizeof mapped.right_stick); /* flicks */
 				}
 			}
+			if (!g_xr_menu_keys) {
+				/* AERON_XR_INVERT_PITCH=1: thumbstick back = nose down (the
+				 * flight stick keeps its real-stick sense). Read every frame
+				 * so the VR options apply at once. */
+				const char* invert = SDL_getenv("AERON_XR_INVERT_PITCH");
+				if (invert && invert[0] == '1') {
+					mapped.right_stick[1] = -mapped.right_stick[1];
+				}
+			}
 			if (g_xr_vstick_active && !g_xr_menu_keys) {
 				/* The game's virtual flight stick: per axis, whichever of it
 				 * and the thumbstick is pushed further. */
