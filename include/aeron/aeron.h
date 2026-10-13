@@ -143,6 +143,9 @@ void Aeron_XrSetVirtualStick(int active, float x, float y, float roll);
  * off. */
 int Aeron_XrPointerHit(float out[3]);
 /* Short vibration on one controller (amplitude 0..1). */
+/* The thumb rest's touch sensor of hand 0 (left) / 1 (right): 1 touched, 0
+ * not, -1 unknown (no such sensor or not tracked). */
+int Aeron_XrThumbrestTouch(int hand);
 void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms);
 /* Nonzero when frames are also shown in a desktop window (not headless). */
 int Aeron_HasDesktopMirror(void);

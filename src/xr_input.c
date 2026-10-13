@@ -141,6 +141,11 @@ int Aeron_XrGetHand(int hand, AeronXrHand* out) {
 	return 0;
 }
 
+int Aeron_XrThumbrestTouch(int hand) {
+	(void)hand;
+	return -1;
+}
+
 void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms) {
 	(void)hand;
 	(void)amplitude;
@@ -166,7 +171,7 @@ typedef struct AeronXrInput {
 	XrAction    a, b, x, y, stick_click, menu;
 	/* Capacitive touch (Touch controllers): index finger on the trigger,
 	 * thumb on any thumb surface. For the VR hands' poses. */
-	XrAction    trigger_touch, thumb_touch;
+	XrAction    trigger_touch, thumb_touch, thumbrest_touch;
 	int         touch_bound;
 	XrSpace     aim_space[AERON_XR_HAND_COUNT];
 
@@ -192,6 +197,7 @@ typedef struct AeronXrInput {
 	float hand_grip[AERON_XR_HAND_COUNT];
 	int   hand_index_touch[AERON_XR_HAND_COUNT]; /* -1 unknown */
 	int   hand_thumb_touch[AERON_XR_HAND_COUNT];
+	int   hand_thumbrest_touch[AERON_XR_HAND_COUNT];
 } AeronXrInput;
 
 static AeronXrInput g_in;
@@ -274,6 +280,8 @@ int Aeron_XrInputInit(void) {
 	g_in.menu   = Aeron_XrCreateAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT, 0);
 	g_in.trigger_touch = Aeron_XrCreateAction("trigger_touch", "Finger on trigger", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
 	g_in.thumb_touch   = Aeron_XrCreateAction("thumb_touch", "Thumb resting", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
+	g_in.thumbrest_touch =
+		Aeron_XrCreateAction("thumbrest_touch", "Thumb on the thumb rest", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
 	if (!g_in.stick || !g_in.trigger || !g_in.grip || !g_in.stick_click || !g_in.aim || !g_in.haptic ||
 		!g_in.a || !g_in.b || !g_in.x || !g_in.y || !g_in.menu) {
 		return 0;
@@ -325,7 +333,7 @@ int Aeron_XrInputInit(void) {
 		/* The same bindings plus capacitive touch. A suggestion replaces any
 		 * earlier one for the profile, so fall back to the plain set if the
 		 * runtime rejects the touch paths. */
-		XrActionSuggestedBinding touch_ext[SDL_arraysize(touch) + 10];
+		XrActionSuggestedBinding touch_ext[SDL_arraysize(touch) + 12];
 		uint32_t                 touch_ext_count = 0;
 		int                      touch_ok        = 0;
 		for (uint32_t k = 0; k < (uint32_t)SDL_arraysize(touch); ++k) {
@@ -345,6 +353,12 @@ int Aeron_XrInputInit(void) {
 			for (uint32_t k = 0; k < (uint32_t)SDL_arraysize(thumb_paths); ++k) {
 				touch_ext[touch_ext_count++] =
 					(XrActionSuggestedBinding) { g_in.thumb_touch, Aeron_XrPath(thumb_paths[k]) };
+			}
+			if (g_in.thumbrest_touch) {
+				touch_ext[touch_ext_count++] = (XrActionSuggestedBinding) {
+					g_in.thumbrest_touch, Aeron_XrPath("/user/hand/left/input/thumbrest/touch") };
+				touch_ext[touch_ext_count++] = (XrActionSuggestedBinding) {
+					g_in.thumbrest_touch, Aeron_XrPath("/user/hand/right/input/thumbrest/touch") };
 			}
 			touch_ok = Aeron_XrSuggest("/interaction_profiles/oculus/touch_controller", touch_ext, touch_ext_count);
 			g_in.touch_bound = touch_ok;
@@ -794,6 +808,7 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	for (int h = 0; h < AERON_XR_HAND_COUNT; ++h) {
 		g_in.hand_index_touch[h] = -1;
 		g_in.hand_thumb_touch[h] = -1;
+		g_in.hand_thumbrest_touch[h] = -1;
 		if (g_in.touch_bound) {
 			XrActionStateGetInfo info  = { XR_TYPE_ACTION_STATE_GET_INFO, NULL };
 			XrActionStateBoolean state = { XR_TYPE_ACTION_STATE_BOOLEAN, NULL };
@@ -807,6 +822,14 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 			state.next  = NULL;
 			if (XR_SUCCEEDED(g_xr.xrGetActionStateBoolean(g_xr.session, &info, &state)) && state.isActive) {
 				g_in.hand_thumb_touch[h] = state.currentState ? 1 : 0;
+			}
+			if (g_in.thumbrest_touch) {
+				info.action = g_in.thumbrest_touch;
+				state.type  = XR_TYPE_ACTION_STATE_BOOLEAN;
+				state.next  = NULL;
+				if (XR_SUCCEEDED(g_xr.xrGetActionStateBoolean(g_xr.session, &info, &state)) && state.isActive) {
+					g_in.hand_thumbrest_touch[h] = state.currentState ? 1 : 0;
+				}
 			}
 		}
 	}
@@ -983,6 +1006,13 @@ int Aeron_XrGetHand(int hand, AeronXrHand* out) {
 	out->thumb_touch    = g_in.hand_thumb_touch[hand];
 	out->valid          = 1;
 	return 1;
+}
+
+int Aeron_XrThumbrestTouch(int hand) {
+	if (hand < 0 || hand >= AERON_XR_HAND_COUNT || !g_in.set) {
+		return -1;
+	}
+	return g_in.hand_thumbrest_touch[hand];
 }
 
 void Aeron_XrHapticPulse(int hand, float amplitude, int duration_ms) {
