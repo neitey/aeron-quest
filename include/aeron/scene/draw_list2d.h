@@ -27,6 +27,9 @@ extern "C" {
 typedef enum {
 	AERON_BLIT2D_BLEND_NONE = 0, /* opaque overwrite */
 	AERON_BLIT2D_BLEND_PMA  = 1, /* premultiplied-alpha over */
+	/* Erase by source alpha: dst *= 1 - src.a (colour and alpha), e.g. to cut
+	 * a soft-edged hole into a transparent layer. */
+	AERON_BLIT2D_BLEND_ERASE = 2,
 } AeronBlit2DBlend;
 
 typedef enum {
