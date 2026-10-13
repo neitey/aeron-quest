@@ -77,6 +77,8 @@ void Aeron_XrScreenSize(int* w, int* h) {
 		*h = 0;
 }
 
+void Aeron_XrRequestRecenter(void) {}
+
 int Aeron_XrVirtualScreenGeometry(float* d, float* w, float* h, float* o) {
 	(void)d;
 	(void)w;
@@ -105,6 +107,8 @@ double Aeron_XrDisplayRefreshRate(void) { return 0.0; }
 #else /* AERON_HAS_OPENXR */
 
 #include "xr_private.h"
+
+static int Aeron_XrSetLocalPose(const XrPosef* pose);
 
 AeronXr g_xr;
 
@@ -467,6 +471,22 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 		Aeron_XrShutdown();
 		return 0;
 	}
+	g_xr.local_pose.orientation.w = 1.0f;
+	{
+		XrReferenceSpaceCreateInfo view_info = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO, NULL };
+		view_info.referenceSpaceType         = XR_REFERENCE_SPACE_TYPE_VIEW;
+		view_info.poseInReferenceSpace.orientation.w = 1.0f;
+		if (XR_FAILED(g_xr.xrCreateReferenceSpace(g_xr.session, &view_info, &g_xr.view_space))) {
+			g_xr.view_space = XR_NULL_HANDLE;
+		}
+	}
+	/* Face the screen at start: whatever way the headset was recentred
+	 * last, the view starts looking at it (AERON_XR_RECENTER_ON_START=0
+	 * keeps the system's LOCAL space). */
+	{
+		const char* v = SDL_getenv("AERON_XR_RECENTER_ON_START");
+		g_xr.recenter_pending = !(v && v[0] == '0');
+	}
 
 	g_xr.screen_width  = screen_width > 0 ? screen_width : 1920;
 	g_xr.screen_height = screen_height > 0 ? screen_height : 1080;
@@ -512,7 +532,7 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 	/* World-locked screen in the LOCAL space (origin = head at session start).
 	 * Defaults give a comfortable cinema-like screen; tunable per user. */
 	g_xr.screen_distance_m      = Aeron_XrEnvFloat("AERON_XR_SCREEN_DISTANCE", 2.1f);
-	g_xr.screen_width_m         = Aeron_XrEnvFloat("AERON_XR_SCREEN_WIDTH", 2.625f);
+	g_xr.screen_width_m         = Aeron_XrEnvFloat("AERON_XR_SCREEN_WIDTH", 2.0f);
 	g_xr.screen_height_offset_m = 0.0f;
 	{
 		const char* offset = SDL_getenv("AERON_XR_SCREEN_HEIGHT_OFFSET");
@@ -548,6 +568,10 @@ void Aeron_XrShutdown(void) {
 		if (g_xr.screen_swapchain) {
 			SDL_DestroyGPUXRSwapchain(g_xr.device, g_xr.screen_swapchain, g_xr.screen_images);
 		}
+	}
+	if (g_xr.view_space && g_xr.xrDestroySpace) {
+		g_xr.xrDestroySpace(g_xr.view_space);
+		g_xr.view_space = XR_NULL_HANDLE;
 	}
 	if (g_xr.local_space && g_xr.xrDestroySpace) {
 		g_xr.xrDestroySpace(g_xr.local_space);
@@ -598,6 +622,19 @@ int Aeron_XrPollEvents(void) {
 				g_xr.session_running = 0;
 				g_xr.exit_requested  = 1;
 			}
+		} else if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+			/* The system recentred LOCAL on the head itself: drop our offset
+			 * so the two don't add up. */
+			const XrEventDataReferenceSpaceChangePending* change =
+				(const XrEventDataReferenceSpaceChangePending*)&event;
+			if (change->referenceSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL && g_xr.session) {
+				XrPosef identity;
+				SDL_zero(identity);
+				identity.orientation.w = 1.0f;
+				Aeron_XrSetLocalPose(&identity);
+				g_xr.recenter_pending = 0;
+				Aeron_LogInfo("aeron.xr", "system recentre: view offset cleared");
+			}
 		} else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
 			g_xr.session_running = 0;
 			g_xr.exit_requested  = 1;
@@ -614,6 +651,76 @@ int Aeron_XrPollEvents(void) {
 int Aeron_XrFrameBegun(void) { return g_xr.frame_begun; }
 
 int Aeron_XrShouldRender(void) { return g_xr.frame_begun && g_xr.should_render; }
+
+/* Replace local_space by LOCAL offset by `pose`. */
+static int Aeron_XrSetLocalPose(const XrPosef* pose) {
+	XrReferenceSpaceCreateInfo info = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO, NULL };
+	XrSpace                    space = XR_NULL_HANDLE;
+	info.referenceSpaceType          = XR_REFERENCE_SPACE_TYPE_LOCAL;
+	info.poseInReferenceSpace        = *pose;
+	if (XR_FAILED(g_xr.xrCreateReferenceSpace(g_xr.session, &info, &space))) {
+		return 0;
+	}
+	if (g_xr.local_space) {
+		g_xr.xrDestroySpace(g_xr.local_space);
+	}
+	g_xr.local_space = space;
+	g_xr.local_pose  = *pose;
+	return 1;
+}
+
+/* Recentre: the head's current position and heading (yaw only, the
+ * horizon stays level) become the origin and the forward direction. */
+static int Aeron_XrRecenterNow(XrTime time) {
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION, NULL };
+	if (!g_xr.view_space || XR_FAILED(g_xr.xrLocateSpace(g_xr.view_space, g_xr.local_space, time, &location)) ||
+		!(location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) ||
+		!(location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+		return 0;
+	}
+	const XrQuaternionf q = location.pose.orientation;
+	/* The head's forward (-Z) in the current local space, flattened. */
+	const float fx = -(2.0f * (q.x * q.z + q.w * q.y));
+	const float fz = -(1.0f - 2.0f * (q.x * q.x + q.y * q.y));
+	if (fx * fx + fz * fz < 1.0e-6f) {
+		return 0; /* looking straight up or down */
+	}
+	const float yaw = SDL_atan2f(-fx, -fz); /* rotation about +Y from -Z to forward */
+	XrPosef delta;
+	delta.orientation.x = 0.0f;
+	delta.orientation.y = SDL_sinf(0.5f * yaw);
+	delta.orientation.z = 0.0f;
+	delta.orientation.w = SDL_cosf(0.5f * yaw);
+	delta.position      = location.pose.position;
+	/* Compose with the current offset: new = local_pose * delta. */
+	const XrQuaternionf a = g_xr.local_pose.orientation, b = delta.orientation;
+	float rp[3];
+	{
+		const float vx = delta.position.x, vy = delta.position.y, vz = delta.position.z;
+		const float tx = 2.0f * (a.y * vz - a.z * vy), ty = 2.0f * (a.z * vx - a.x * vz),
+					tz = 2.0f * (a.x * vy - a.y * vx);
+		rp[0] = vx + a.w * tx + (a.y * tz - a.z * ty);
+		rp[1] = vy + a.w * ty + (a.z * tx - a.x * tz);
+		rp[2] = vz + a.w * tz + (a.x * ty - a.y * tx);
+	}
+	XrPosef pose;
+	pose.position.x    = g_xr.local_pose.position.x + rp[0];
+	pose.position.y    = g_xr.local_pose.position.y + rp[1];
+	pose.position.z    = g_xr.local_pose.position.z + rp[2];
+	pose.orientation.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+	pose.orientation.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
+	pose.orientation.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
+	pose.orientation.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
+	if (!Aeron_XrSetLocalPose(&pose)) {
+		return 0;
+	}
+	Aeron_LogInfo("aeron.xr", "view recentred (turned %.0f deg, moved %.2f %.2f %.2f m)",
+				  (double)(yaw * 57.29578f), (double)delta.position.x, (double)delta.position.y,
+				  (double)delta.position.z);
+	return 1;
+}
+
+void Aeron_XrRequestRecenter(void) { g_xr.recenter_pending = 1; }
 
 int Aeron_XrWaitAndBeginFrame(void) {
 	XrFrameWaitInfo  wait_info   = { XR_TYPE_FRAME_WAIT_INFO, NULL };
@@ -651,6 +758,12 @@ int Aeron_XrWaitAndBeginFrame(void) {
 	g_xr.predicted_display_time   = frame_state.predictedDisplayTime;
 	g_xr.predicted_display_period = frame_state.predictedDisplayPeriod;
 	g_xr.should_render            = frame_state.shouldRender;
+	/* Recentre once tracking has settled (a few focused frames). */
+	if (g_xr.recenter_pending && g_xr.state == XR_SESSION_STATE_FOCUSED && ++g_xr.recenter_frames > 10 &&
+		Aeron_XrRecenterNow(frame_state.predictedDisplayTime)) {
+		g_xr.recenter_pending = 0;
+		g_xr.recenter_frames  = 0;
+	}
 	return 1;
 }
 

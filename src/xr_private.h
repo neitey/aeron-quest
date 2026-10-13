@@ -27,6 +27,12 @@ typedef struct AeronXr {
 	XrSystemId     system_id;
 	XrSession      session;
 	XrSpace        local_space;
+	/* LOCAL recentred on the head: local_space is LOCAL offset by
+	 * local_pose (yaw + position of the head when recentred). */
+	XrSpace        view_space;
+	XrPosef        local_pose;
+	int            recenter_pending;
+	int            recenter_frames;
 	XrSessionState state;
 	uint32_t       max_layers; /* composition layers the runtime accepts per frame */
 	int            session_running;

@@ -105,6 +105,10 @@ enum { AERON_XR_PANEL_CONSOLE = 0, AERON_XR_PANEL_CARD = 1, AERON_XR_PANEL_CARD2
 
 #define AERON_XR_MAX_PANELS 12
 
+/* Recentre the view on the head's current position and heading at the
+ * next frame (done automatically once at start). */
+void Aeron_XrRequestRecenter(void);
+
 /* The world-locked virtual screen in the LOCAL space: distance ahead,
  * width and height (the quad, its pixel aspect) and the height offset, in
  * metres. Returns 0 while there is no XR screen. */
