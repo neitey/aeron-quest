@@ -14,6 +14,8 @@
  *   right thumbstick X/Y          -> LEFTX / LEFTY           -> yaw / pitch
  *   left thumbstick X             -> RIGHTX                  -> roll
  *   left thumbstick Y (integrated)-> RIGHT_TRIGGER           -> throttle lever
+ *   (the left stick is split into a wide roll zone and a narrow throttle
+ *   zone, see throttle_zone_deg)
  *   left thumbstick Y (raw)       -> RIGHTY                  -> (unbound)
  *   left trigger                  -> LEFT_TRIGGER            -> (unbound)
  *   right trigger                 -> SOUTH                   -> fire
@@ -50,6 +52,7 @@ typedef struct AeronXrTouchState {
 	int   left_stick_click;
 	int   right_stick_click;
 	int   menu;
+	float extra_roll;     /* roll from elsewhere (virtual stick twist), -1..1 */
 } AeronXrTouchState;
 
 /* Persistent mapper state (throttle lever position, previous buttons). */
@@ -58,6 +61,11 @@ typedef struct AeronXrTouchMapper {
 	float    throttle_rate;     /* full travel per second at full stick */
 	float    stick_deadzone;    /* applied before the lever integrates */
 	float    digital_threshold; /* trigger/grip press threshold */
+	/* Left stick zones: within this angle of straight forward/back the
+	 * stick moves the throttle only; everywhere else it rolls only, so a
+	 * sloppy sideways push never changes speed (default 30 degrees: roll
+	 * gets 2 x 120 degrees, throttle 2 x 60). */
+	float    throttle_zone_deg;
 	uint32_t previous_buttons;
 } AeronXrTouchMapper;
 

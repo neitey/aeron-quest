@@ -53,6 +53,17 @@ void Aeron_XrCaptureGrip(int hand, int captured) {
 	}
 }
 
+/* A game-drawn flight stick (see Aeron_XrSetVirtualStick). */
+static int   g_xr_vstick_active;
+static float g_xr_vstick[3];
+
+void Aeron_XrSetVirtualStick(int active, float x, float y, float roll) {
+	g_xr_vstick_active = active != 0;
+	g_xr_vstick[0]     = active ? x : 0.0f;
+	g_xr_vstick[1]     = active ? y : 0.0f;
+	g_xr_vstick[2]     = active ? roll : 0.0f;
+}
+
 #define AERON_XR_BUTTON_QUEUE 32
 
 typedef struct AeronXrButtonPress {
@@ -232,6 +243,10 @@ int Aeron_XrInputInit(void) {
 		const char* rate = SDL_getenv("AERON_XR_THROTTLE_RATE");
 		if (rate && rate[0] && SDL_atof(rate) > 0.0) {
 			g_in.mapper.throttle_rate = (float)SDL_atof(rate);
+		}
+		const char* zone = SDL_getenv("AERON_XR_THROTTLE_ZONE");
+		if (zone && zone[0] && SDL_atof(zone) > 0.0 && SDL_atof(zone) < 90.0) {
+			g_in.mapper.throttle_zone_deg = (float)SDL_atof(zone);
 		}
 	}
 
@@ -866,6 +881,17 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 					mapped.right_grip = 0.0f;
 					memset(mapped.right_stick, 0, sizeof mapped.right_stick); /* flicks */
 				}
+			}
+			if (g_xr_vstick_active && !g_xr_menu_keys) {
+				/* The game's virtual flight stick: per axis, whichever of it
+				 * and the thumbstick is pushed further. */
+				for (int a = 0; a < 2; ++a) {
+					if (fabsf(g_xr_vstick[a]) > fabsf(mapped.right_stick[a])) {
+						mapped.right_stick[a] = g_xr_vstick[a];
+					}
+				}
+				mapped.active_right = 1;
+				mapped.extra_roll   = g_xr_vstick[2];
 			}
 			if (g_xr_trigger_captured[AERON_XR_HAND_RIGHT] || g_xr_trigger_latched[AERON_XR_HAND_RIGHT]) {
 				mapped.right_trigger = 0.0f; /* owned by a game UI: no fire */

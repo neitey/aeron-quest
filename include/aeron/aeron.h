@@ -133,6 +133,11 @@ void Aeron_XrCaptureTrigger(int hand, int captured);
  * started while captured, the game does not see it (no shift layer, no
  * grip button). */
 void Aeron_XrCaptureGrip(int hand, int captured);
+/* A flight stick the game draws and the player grabs: while active, its
+ * deflection (x right, y forward = nose down, -1..1) drives the right
+ * thumbstick's axes (whichever is pushed further) and `roll` (-1..1) the
+ * left thumbstick's roll. Set every frame; inactive releases it. */
+void Aeron_XrSetVirtualStick(int active, float x, float y, float roll);
 /* Menus: the point (LOCAL space, metres) where the right controller's aim
  * ray meets the virtual screen. Returns 0 when it misses or the pointer is
  * off. */
