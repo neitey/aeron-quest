@@ -62,6 +62,8 @@ void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count) {
 	(void)count;
 }
 
+void Aeron_XrStereoCommitEyeOverlay(void) {}
+
 int Aeron_XrStereoScreenOverlay(void) { return 0; }
 
 int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* c) {
@@ -146,6 +148,7 @@ typedef struct AeronXrStereo {
 	XrView         views[AERON_XR_EYE_COUNT];
 	int            committed;
 	int            screen_overlay; /* committed as a backdrop to the virtual screen */
+	int            eye_overlay;    /* the eyes again over the frame, by their alpha */
 	AeronXrHudQuad hud;
 	AeronXrHudQuad hud_world;
 	/* Smoothed head-locked HUD pose (LOCAL space). */
@@ -155,6 +158,7 @@ typedef struct AeronXrStereo {
 	/* Layer storage for xrEndFrame (must outlive the call) */
 	XrCompositionLayerProjectionView proj_views[AERON_XR_EYE_COUNT];
 	XrCompositionLayerProjection     projection;
+	XrCompositionLayerProjection     projection_overlay;
 	XrCompositionLayerQuad           hud_quad;
 	XrCompositionLayerQuad           hud_world_quad;
 	/* Cockpit panels: parts of the HUD target as separate quads. */
@@ -500,6 +504,7 @@ void Aeron_XrStereoCommitHuds(const AeronXrHudQuad* hud, const AeronXrHudQuad* h
 	}
 	g_st.committed       = 1;
 	g_st.screen_overlay  = 0;
+	g_st.eye_overlay     = 0;
 	g_st.panel_count     = 0;
 	g_st.beam_count      = 0;
 	memset(g_st.layer_count, 0, sizeof g_st.layer_count);
@@ -632,6 +637,8 @@ void Aeron_XrStereoCommitPanelLayer(int which, const AeronXrPanel* quads, int co
 void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) {
 	Aeron_XrStereoCommitPanelLayer(AERON_XR_PANEL_CONSOLE, console, console ? 1 : 0);
 }
+
+void Aeron_XrStereoCommitEyeOverlay(void) { g_st.eye_overlay = g_st.committed; }
 
 void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count) {
 	g_st.beam_count = 0;
@@ -883,10 +890,13 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 	if (!Aeron_XrStereoCommitted()) {
 		g_st.committed      = 0;
 		g_st.screen_overlay = 0;
+		g_st.eye_overlay    = 0;
 		return 0;
 	}
+	const int eye_overlay = g_st.eye_overlay;
 	g_st.committed      = 0;
 	g_st.screen_overlay = 0;
+	g_st.eye_overlay    = 0;
 	eyes_ok        = g_st.chains[0].released_once && g_st.chains[1].released_once;
 	if (!eyes_ok || capacity < 2) {
 		return 0;
@@ -983,6 +993,15 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 				layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
 			}
 			g_st.layer_count[which] = 0;
+			if (which == AERON_XR_PANEL_FRAME && eye_overlay && count < capacity) {
+				/* The eye images once more, shown only where their alpha is up
+				 * (the hands): the hands come out in front of the screen and
+				 * its frame. */
+				g_st.projection_overlay            = g_st.projection;
+				g_st.projection_overlay.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+													 XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+				layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.projection_overlay;
+			}
 		}
 	}
 	/* Pointer beams over everything they point at. */

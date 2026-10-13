@@ -194,6 +194,17 @@ static AeronBlendStateDesc blit_blend_state(AeronBlit2DBlend blend) {
 		bs.src_alpha = AERON_BLEND_ZERO;
 		bs.dst_alpha = AERON_BLEND_ONE_MINUS_SRC_ALPHA;
 		bs.alpha_op  = AERON_BLEND_OP_ADD;
+	} else if (blend == AERON_BLIT2D_BLEND_ALPHA_SET || blend == AERON_BLIT2D_BLEND_ALPHA_OVER) {
+		const int over = blend == AERON_BLIT2D_BLEND_ALPHA_OVER;
+		bs.enabled                 = 1;
+		bs.src_color               = AERON_BLEND_ZERO;
+		bs.dst_color               = AERON_BLEND_ONE;
+		bs.color_op                = AERON_BLEND_OP_ADD;
+		bs.src_alpha               = AERON_BLEND_ONE;
+		bs.dst_alpha               = over ? AERON_BLEND_ONE_MINUS_SRC_ALPHA : AERON_BLEND_ZERO;
+		bs.alpha_op                = AERON_BLEND_OP_ADD;
+		bs.color_write_mask_enable = 1;
+		bs.color_write_mask        = 0x8; /* A */
 	}
 	return bs;
 }

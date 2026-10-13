@@ -30,6 +30,11 @@ typedef enum {
 	/* Erase by source alpha: dst *= 1 - src.a (colour and alpha), e.g. to cut
 	 * a soft-edged hole into a transparent layer. */
 	AERON_BLIT2D_BLEND_ERASE = 2,
+	/* Alpha channel only, colour untouched: ALPHA_SET writes src.a,
+	 * ALPHA_OVER adds coverage (dst.a = src.a + dst.a * (1 - src.a)). For
+	 * building a layer's alpha mask after its colour is drawn. */
+	AERON_BLIT2D_BLEND_ALPHA_SET  = 3,
+	AERON_BLIT2D_BLEND_ALPHA_OVER = 4,
 } AeronBlit2DBlend;
 
 typedef enum {
