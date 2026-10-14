@@ -64,12 +64,14 @@ float4 direct_output(float3 hdr, float alpha, float2 pixel)
     return float4(rgb, alpha);
 }
 
-/* Premultiplied result: tonemap the colour, keep it premultiplied. */
+/* Premultiplied result: the premultiplied colour is the light this
+ * texel adds (HDR emission scaled into it), so it is tonemapped as is and
+ * blended src + dst * (1 - a). Tonemapping the straight colour and
+ * multiplying by alpha back would cap every texel at its alpha and dim
+ * faint glows. */
 float4 direct_output_pma(float4 c)
 {
-    float a = c.a;
-    float3 straight = a > 1.0e-4f ? c.rgb / a : c.rgb;
-    return float4(direct_tonemap(straight) * (a > 1.0e-4f ? a : 1.0f), a);
+    return float4(direct_tonemap(c.rgb), c.a);
 }
 
 #endif

@@ -1541,12 +1541,20 @@ static int scene_direct_ensure(AeronScene3D* s, AeronTextureFormat format) {
 		AeronSceneMeshOverlay_Ensure(s);
 		const char* variant = getenv("AERON_PBR_SHADER");
 		const int   lite    = variant && strcmp(variant, "lite") == 0;
-		s->direct.pbr_fs = AeronSceneInternal_CompileShader(lite ? "scene_pbr_mesh_lite_direct.frag"
-																 : "scene_pbr_mesh_direct.frag",
-															AERON_SHADER_STAGE_FRAGMENT, 8, 4, 5);
-		s->direct.pbr_mask_fs = AeronSceneInternal_CompileShader(
-			lite ? "scene_pbr_mesh_mask_lite_direct.frag" : "scene_pbr_mesh_mask_direct.frag",
-			AERON_SHADER_STAGE_FRAGMENT, 8, 4, 5);
+		for (int attempt = lite ? 0 : 1; attempt < 2 && !(s->direct.pbr_fs && s->direct.pbr_mask_fs); ++attempt) {
+			if (s->direct.pbr_fs) {
+				Aeron_DestroyShader(s->direct.pbr_fs);
+			}
+			if (s->direct.pbr_mask_fs) {
+				Aeron_DestroyShader(s->direct.pbr_mask_fs);
+			}
+			s->direct.pbr_fs = AeronSceneInternal_CompileShader(attempt == 0 ? "scene_pbr_mesh_lite_direct.frag"
+																			  : "scene_pbr_mesh_direct.frag",
+																AERON_SHADER_STAGE_FRAGMENT, 8, 4, 5);
+			s->direct.pbr_mask_fs = AeronSceneInternal_CompileShader(
+				attempt == 0 ? "scene_pbr_mesh_mask_lite_direct.frag" : "scene_pbr_mesh_mask_direct.frag",
+				AERON_SHADER_STAGE_FRAGMENT, 8, 4, 5);
+		}
 		static const char* const k_bb[3] = { "scene_billboard3d_direct_alpha.frag", "scene_billboard3d_direct_add.frag",
 											  "scene_billboard3d_direct_pma.frag" };
 		static const char* const k_ov[3] = { "scene_mesh_overlay_direct_alpha.frag",
@@ -1604,6 +1612,32 @@ static int scene_direct_ensure(AeronScene3D* s, AeronTextureFormat format) {
 	return s->direct.msaa_rt != NULL;
 }
 
+/* Direct output only where the forward pass is the last word and every
+ * draw in it has a direct pipeline: MSAA; no post effect, debug view or
+ * hook (hooks draw with their own pipelines at the HDR format); no lens
+ * flares (drawn later into the HDR target); the target the size and
+ * format of the pass. */
+static int scene_direct_possible(const AeronScene3D* s) {
+	if (s->sample_count == AERON_SAMPLE_COUNT_1 || s->temporal_active_mode != AERON_TEMPORAL_OFF ||
+		s->post.mb_quality > 0 || (s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f) ||
+		s->pbr_debug_views || s->directional_shadow.debug_cascades || s->after_meshes_fn) {
+		return 0;
+	}
+	for (int h = 0; h < AERON_SCENE_HOOK_COUNT; ++h) {
+		if (s->hook_fn[h]) {
+			return 0;
+		}
+	}
+	for (int i = 0; i < s->bb_count; ++i) {
+		if (s->bb_entries[i].stage == AERON_SCENE_BILLBOARD_STAGE_LENS) {
+			return 0;
+		}
+	}
+	AeronTexture* t = Aeron_RenderTargetGetTexture(s->direct_target);
+	return t && Aeron_TextureGetWidth(t) == s->render_w && Aeron_TextureGetHeight(t) == s->render_h &&
+		   Aeron_TextureGetFormat(t) == s->direct_target_format;
+}
+
 static void scene_direct_bind_uniforms(AeronScene3D* s, AeronRenderPass* pass) {
 	const float u[12] = {
 		1.0f, /* exposure, as the tonemap pass */
@@ -1645,10 +1679,7 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	s->direct_used = 0;
 	/* Direct only where the forward pass is the last word: MSAA, and no
 	 * post effect that reads the HDR colour afterwards. */
-	const int direct = s->direct_target && s->sample_count != AERON_SAMPLE_COUNT_1 &&
-					   s->temporal_active_mode == AERON_TEMPORAL_OFF && s->post.mb_quality <= 0 &&
-					   !(s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f) &&
-					   scene_direct_ensure(s, s->direct_target_format);
+	const int direct = s->direct_target && scene_direct_possible(s) && scene_direct_ensure(s, s->direct_target_format);
 	if (s->direct_target && !direct && !s->direct.logged) {
 		s->direct.logged = 1;
 		Aeron_LogWarn("aeron.scene", "direct output requested but not possible here: rendering via HDR");

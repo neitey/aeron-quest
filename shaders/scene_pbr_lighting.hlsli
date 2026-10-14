@@ -640,7 +640,7 @@ void accumulate_point_light(uint light_index, float3 N, float3 N_spec, float3 V,
     float ndotl = dot(N, L);
     float shape = lerp(saturate(ndotl), saturate(ndotl * 0.5f + 0.5f), wrap);
     diff += radiance * shape;
-    if (fs_point_params.y > 0.0f) {
+    if (fs_point_params.y > 0.0f && spec_mul > 0.0f) {
         float g_unused;
         spec_out += cook_torrance_spec(N_spec, V, L, mp, g_unused) * radiance *
                     (mp.spec_intensity * spec_mul * fs_point_params.y);
