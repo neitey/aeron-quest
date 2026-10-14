@@ -376,6 +376,17 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
 #if AERON_PBR_DIRECT_OUTPUT
     _out.color = direct_output(lit, alpha, i.position.xy);
 #else
+    /* A negative base_color_emissive_strength caps the colour at its
+     * magnitude, hue kept: an instance held below the bloom threshold
+     * (OpenXWA: the VR cockpit while one bloom serves both eyes - its
+     * glow, taken from the left eye, would sit beside it in the right). */
+    if (i.base_color_emissive_strength < 0.0f) {
+        float peak = max(lit.r, max(lit.g, lit.b));
+        float cap = -i.base_color_emissive_strength;
+        if (peak > cap) {
+            lit *= cap / peak;
+        }
+    }
     _out.color = float4(lit, alpha);
 #endif
     return _out;
