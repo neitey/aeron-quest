@@ -133,6 +133,7 @@ int Fixture_Create(Fixture* f, const CaptureConfig* config) {
 void Fixture_Destroy(Fixture* f) {
 	AeronDrawList_Destroy(f->chart_draws);
 	Aeron_DestroyRenderTarget(f->chart_rt);
+	Aeron_DestroyRenderTarget(f->direct_rt);
 	AeronScene_Destroy(f->scene);
 	AeronScene_Destroy(f->reference_scene);
 	for (int i = 0; i < CAPTURE_MAX_MODELS; ++i)
@@ -246,6 +247,24 @@ AeronRenderTarget* Fixture_Record(Fixture* f, double time, int blur, AeronComman
 	if (!AeronScene_Render(scene, cmd))
 		return NULL;
 	return AeronScene_SceneRt(scene);
+}
+
+AeronRenderTarget* Fixture_RenderDirect(Fixture* f, double time) {
+	if (!f->direct_rt) {
+		f->direct_rt = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) { .width      = f->config.width,
+																		   .height     = f->config.height,
+																		   .format     = AERON_TEXTURE_FORMAT_RGBA16_FLOAT,
+																		   .debug_name = "capture.direct" });
+		if (!f->direct_rt)
+			return NULL;
+	}
+	AeronScene_SetDirectOutput(f->reference_scene, f->direct_rt, AERON_TEXTURE_FORMAT_RGBA16_FLOAT, NULL);
+	AeronRenderTarget* target = Fixture_Render(f, time, 0);
+	if (!target || !AeronScene_DirectOutputUsed(f->reference_scene)) {
+		Aeron_LogError("scene_capture", "direct output was not used");
+		return NULL;
+	}
+	return f->direct_rt;
 }
 
 AeronRenderTarget* Fixture_Render(Fixture* f, double time, int blur) {

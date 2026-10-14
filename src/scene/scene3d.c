@@ -1452,7 +1452,8 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
  *
  * The forward pass renders straight into the caller's (sRGB) output: its
  * colour shaders tonemap in place (scene_direct_output.hlsli; the uniform
- * block is fragment slot 3) and the MSAA colour resolves into the target.
+ * block is fragment slot 3). With MSAA the multisampled colour resolves
+ * into the target; without, the single colour pass draws into it.
  * The direct-mode colour pipelines live in s->direct and are swapped with
  * the normal ones around a direct Render, so every draw path picks them
  * up unchanged. */
@@ -1524,8 +1525,8 @@ static void scene_direct_release(AeronScene3D* s) {
 	memset(&s->direct, 0, sizeof s->direct);
 }
 
-/* Shaders and the always-needed pipelines, once; the MSAA colour target at
- * the current size and format. Called unswapped. */
+/* Shaders and the always-needed pipelines, once; with MSAA the multisampled
+ * colour target at the current size and format. Called unswapped. */
 static int scene_direct_ensure(AeronScene3D* s, AeronTextureFormat format) {
 	if (s->direct.tried && s->direct.format != format) {
 		scene_direct_release(s); /* another output format: start over */
@@ -1595,6 +1596,13 @@ static int scene_direct_ensure(AeronScene3D* s, AeronTextureFormat format) {
 	if (!s->direct.ready) {
 		return 0;
 	}
+	if (s->sample_count == AERON_SAMPLE_COUNT_1) {
+		if (s->direct.msaa_rt) {
+			Aeron_DestroyRenderTarget(s->direct.msaa_rt);
+			s->direct.msaa_rt = NULL;
+		}
+		return 1;
+	}
 	if (!s->direct.msaa_rt || s->direct.msaa_w != s->render_w || s->direct.msaa_h != s->render_h) {
 		if (s->direct.msaa_rt) {
 			Aeron_DestroyRenderTarget(s->direct.msaa_rt);
@@ -1613,12 +1621,13 @@ static int scene_direct_ensure(AeronScene3D* s, AeronTextureFormat format) {
 }
 
 /* Direct output only where the forward pass is the last word and every
- * draw in it has a direct pipeline: MSAA; no post effect, debug view or
+ * draw in it has a direct pipeline: no post effect, debug view or
  * hook (hooks draw with their own pipelines at the HDR format); no lens
  * flares (drawn later into the HDR target); the target the size and
  * format of the pass. */
 static int scene_direct_possible(const AeronScene3D* s) {
-	if (s->sample_count == AERON_SAMPLE_COUNT_1 || s->temporal_active_mode != AERON_TEMPORAL_OFF ||
+	/* (Without MSAA these also keep the scene in its single colour pass.) */
+	if (s->temporal_active_mode != AERON_TEMPORAL_OFF ||
 		s->post.mb_quality > 0 || (s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f) ||
 		s->pbr_debug_views || s->directional_shadow.debug_cascades || s->after_meshes_fn) {
 		return 0;
@@ -1677,8 +1686,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		return 0;
 	}
 	s->direct_used = 0;
-	/* Direct only where the forward pass is the last word: MSAA, and no
-	 * post effect that reads the HDR colour afterwards. */
+	/* Direct only where the forward pass is the last word: no post effect
+	 * that reads the HDR colour afterwards. */
 	const int direct = s->direct_target && scene_direct_possible(s) && scene_direct_ensure(s, s->direct_target_format);
 	if (s->direct_target && !direct && !s->direct.logged) {
 		s->direct.logged = 1;
@@ -1966,7 +1975,7 @@ static int scene_render_impl(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		/* ---- Monolithic single color pass. No normal prepass is needed
 		 * because no active effect consumes the normal G-buffer. */
 		pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
-			.color_target      = s->color_rt,
+			.color_target      = s->direct_active ? s->direct_target : s->color_rt,
 			.depth_target      = s->depth_rt,
 			.viewport          = s->camera.viewport,
 			.clear_color       = 1,
@@ -1978,6 +1987,9 @@ static int scene_render_impl(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		});
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene main pass creation failed");
+		}
+		if (s->direct_active) {
+			scene_direct_bind_uniforms(s, pass);
 		}
 		if (!s->sky_last && !scene_draw_sky_layers(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
@@ -2008,7 +2020,7 @@ static int scene_render_impl(AeronScene3D* s, AeronCommandBuffer* cmd) {
 				return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 			}
 		}
-		scene_run_after_meshes(s, cmd, pass, s->color_rt);
+		scene_run_after_meshes(s, cmd, pass, s->direct_active ? s->direct_target : s->color_rt);
 		Aeron_GpuDebugMarker(cmd, "Overlay billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_OVERLAY);
 	}

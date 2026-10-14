@@ -40,6 +40,7 @@ typedef struct Fixture {
 	CaptureConfig      config;
 	AeronRenderTarget* chart_rt;
 	AeronDrawList2D*   chart_draws;
+	AeronRenderTarget* direct_rt; /* SCENE_CAPTURE_DIRECT */
 } Fixture;
 
 typedef struct CaptureBloom {
@@ -55,6 +56,9 @@ int                CaptureConfig_Load(const char* path, CaptureConfig* config);
 int                Fixture_Create(Fixture* fixture, const CaptureConfig* config);
 void               Fixture_Destroy(Fixture* fixture);
 AeronRenderTarget* Fixture_Render(Fixture* fixture, double time, int blur);
+/* The sharp scene through direct output (AeronScene_SetDirectOutput):
+ * tonemapped in the scene's shaders, display-linear like "present". */
+AeronRenderTarget* Fixture_RenderDirect(Fixture* fixture, double time);
 int  Capture_Read(AeronRenderTarget* target, int width, int height, uint16_t* staging, float* rgb);
 int  Capture_Write(const CaptureConfig* config, int frame, const char* name, const float* rgb);
 int  Capture_WriteImage(const CaptureConfig* config, int frame, const char* name, int width, int height,

@@ -40,6 +40,13 @@ int Capture_Run(Fixture* fixture) {
 				 Capture_Write(c, frame, "sharp", sample);
 		if (!ok)
 			break;
+		if (getenv("SCENE_CAPTURE_DIRECT") && getenv("SCENE_CAPTURE_DIRECT")[0] == '1') {
+			target = Fixture_RenderDirect(fixture, time);
+			ok     = target && Capture_Read(target, c->width, c->height, staging, sample) &&
+					 Capture_Write(c, frame, "direct", sample);
+			if (!ok)
+				break;
+		}
 		if (!c->reference_samples) {
 			Aeron_LogInfo("scene_capture", "Captured frame %d of %d", frame + 1, c->frames);
 			continue;

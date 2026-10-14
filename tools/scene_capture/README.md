@@ -85,6 +85,7 @@ Images have both PFM (float32 RGB) and PNG (8-bit sRGB) versions:
 | `frame_NNN_reference` | Temporal reference, when requested. |
 | `frame_NNN_bloom` | Native-size linear bloom before intensity and final presentation filtering. |
 | `frame_NNN_present` | Scene plus bloom through the production tonemapper; its PFM is display-linear. |
+| `frame_NNN_direct` | With `SCENE_CAPTURE_DIRECT=1` in the environment: the sharp scene through direct output (tonemapped in the scene's shaders, no bloom); display-linear, compare with `present` at bloom intensity 0. |
 | `frame_NNN_metrics.yaml` | Motion-blur reference error. |
 | `frame_NNN_bloom_metrics.yaml` | Bloom energy, peak, centroid and spread, globally and per chart region. |
 

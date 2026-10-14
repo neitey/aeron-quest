@@ -34,7 +34,12 @@ struct GltfMaterial
     float4 emissive_packed;
     float4 metal_rough; /* x=metallic, y=roughness, z=alpha cutoff */
     uint   flags;
-    uint3  _pad;
+    /* Three scalars, not a uint3: glslang gives a uint3 member 16-byte
+     * alignment in a StructuredBuffer and pads the element to 144 bytes,
+     * against the 128 the C side (and DXC) use. */
+    uint   _pad0;
+    uint   _pad1;
+    uint   _pad2;
 };
 
 StructuredBuffer<GltfMaterial> g_materials
@@ -72,7 +77,9 @@ GltfMaterial pbr_default_material()
     material.emissive_packed = float4(0, 0, 0, 1);
     material.metal_rough = float4(0, 1, 0.5f, 0);
     material.flags = 0u;
-    material._pad = uint3(0, 0, 0);
+    material._pad0 = 0u;
+    material._pad1 = 0u;
+    material._pad2 = 0u;
     return material;
 }
 
