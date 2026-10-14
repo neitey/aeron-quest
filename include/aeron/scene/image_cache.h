@@ -64,6 +64,12 @@ void Aeron_ImageCacheClearOverrides(AeronImageCache* cache);
  * their own keying (per-species atlas slots, cockpit assets). */
 struct Ktx2;
 AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const struct Ktx2* ktx, const char* debug_name);
+/* As Aeron_ImageUploadKtx2, but an uncompressed RGBA8 2D image is
+ * compressed to ASTC 4x4 first when the GPU samples that format and the
+ * encoder is built in (mobile GPUs read BCn-free assets uncompressed
+ * otherwise: four times the texture memory traffic). Falls back to the
+ * plain upload. */
+AeronTexture* Aeron_ImageUploadKtx2Compressed(AeronCommandBuffer* cmd, const struct Ktx2* ktx, const char* debug_name);
 
 /* Upload an RGBA8 image from memory with the same alpha, color-space and mip
  * handling used by runtime atlases and fonts. The caller owns the texture. */

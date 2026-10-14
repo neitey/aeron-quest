@@ -1,0 +1,4 @@
+ARM ASTC Encoder (astcenc) library sources, Apache-2.0 (LICENSE.txt).
+Upstream: https://github.com/ARM-software/astc-encoder at 25ad7b6392a79d0b7922d97244d311cef921ec99.
+Only the codec library (Source/astcenc_*); the command-line tool is not vendored.
+Used by src/scene/astc_transcode.cpp to compress mesh atlases for mobile GPUs.

@@ -205,6 +205,19 @@ set(AERON_SHADER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_lite.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_lite.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_direct.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_direct.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_lite_direct.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_mesh_mask_lite_direct.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_direct_alpha.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_direct_add.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_billboard3d_direct_pma.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_sky_cube_direct.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay_direct_alpha.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay_direct_add.frag.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_mesh_overlay_direct_pma.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.vert.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass.frag.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/scene_pbr_prepass_mask.vert.hlsl
@@ -786,7 +799,33 @@ if(NOT MSVC)
 endif()
 set_target_properties(opt2gltf_lib PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
+# ARM's ASTC encoder: mesh atlases compressed to ASTC 4x4 on mobile GPUs
+# (src/scene/astc_transcode.cpp). On by default for Android.
+if(ANDROID)
+    set(AERON_ASTC_DEFAULT ON)
+else()
+    set(AERON_ASTC_DEFAULT OFF)
+endif()
+option(AERON_ASTC "Build the ASTC encoder for mobile texture compression" ${AERON_ASTC_DEFAULT})
+if(AERON_ASTC)
+    file(GLOB AERON_ASTCENC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/astc-encoder/Source/astcenc_*.cpp)
+    add_library(aeron_astcenc STATIC ${AERON_ASTCENC_SOURCES})
+    target_include_directories(aeron_astcenc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/astc-encoder/Source)
+    set_target_properties(aeron_astcenc PROPERTIES CXX_STANDARD 14 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+        target_compile_definitions(aeron_astcenc PRIVATE ASTCENC_NEON=1 ASTCENC_SVE=0 ASTCENC_SSE=0 ASTCENC_AVX=0
+                                   ASTCENC_POPCNT=0 ASTCENC_F16C=0)
+    else()
+        target_compile_definitions(aeron_astcenc PRIVATE ASTCENC_NEON=0 ASTCENC_SVE=0 ASTCENC_SSE=0 ASTCENC_AVX=0
+                                   ASTCENC_POPCNT=0 ASTCENC_F16C=0)
+    endif()
+    if(NOT MSVC)
+        target_compile_options(aeron_astcenc PRIVATE -O3 -w)
+    endif()
+endif()
+
 add_library(aeron_scene STATIC
+    src/scene/astc_transcode.cpp
     src/asset/flight_model.c
     src/scene/ktx2_reader.c
     src/scene/image_cache.c
@@ -854,6 +893,10 @@ target_link_libraries(aeron_scene
         aeron_fsr3
         zstd::libzstd
 )
+if(AERON_ASTC)
+    target_link_libraries(aeron_scene PRIVATE aeron_astcenc)
+    target_compile_definitions(aeron_scene PRIVATE AERON_HAS_ASTCENC=1)
+endif()
 
 if(MSVC)
     target_compile_options(aeron_scene PRIVATE /W4)

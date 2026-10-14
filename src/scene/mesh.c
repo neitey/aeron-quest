@@ -333,7 +333,12 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 		}
 		char label[96];
 		snprintf(label, sizeof label, "%s.%s", name, channel_name(c));
-		s->atlas[c] = Aeron_ImageUploadKtx2(cmd, channel_payloads[c], label);
+		/* AERON_TEXTURE_ASTC=1: ASTC 4x4 on GPUs without BCn (mobile). */
+		{
+			const char* astc = getenv("AERON_TEXTURE_ASTC");
+			s->atlas[c] = astc && astc[0] == '1' ? Aeron_ImageUploadKtx2Compressed(cmd, channel_payloads[c], label)
+												 : Aeron_ImageUploadKtx2(cmd, channel_payloads[c], label);
+		}
 		ktx2_close(channel_payloads[c]);
 		channel_payloads[c] = NULL;
 		if (!s->atlas[c]) {

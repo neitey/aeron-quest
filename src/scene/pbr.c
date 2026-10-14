@@ -325,8 +325,31 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	s->pbr_prepass_vs       = pbr_shader("scene_pbr_prepass.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_mask_vs  = pbr_shader("scene_pbr_prepass_mask.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
 	s->pbr_prepass_stamp_vs = pbr_shader("scene_pbr_prepass_stamp.vert", AERON_SHADER_STAGE_VERTEX, 0, 1, 1);
-	s->pbr_fs               = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
-	s->pbr_mask_fs          = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+	/* AERON_PBR_SHADER=lite: the cheaper mobile fragment shader (same
+	 * resources and interface; scene_pbr_mesh_lite_impl.hlsli). */
+	{
+		const char* variant = getenv("AERON_PBR_SHADER");
+		if (variant && strcmp(variant, "lite") == 0) {
+			s->pbr_fs      = pbr_shader("scene_pbr_mesh_lite.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+			s->pbr_mask_fs = pbr_shader("scene_pbr_mesh_mask_lite.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+			if (!s->pbr_fs || !s->pbr_mask_fs) {
+				Aeron_LogWarn("aeron.scene", "lite PBR shaders unavailable: using the full ones");
+				if (s->pbr_fs) {
+					Aeron_DestroyShader(s->pbr_fs);
+				}
+				if (s->pbr_mask_fs) {
+					Aeron_DestroyShader(s->pbr_mask_fs);
+				}
+				s->pbr_fs = s->pbr_mask_fs = NULL;
+			} else {
+				Aeron_LogInfo("aeron.scene", "PBR meshes: lite fragment shader");
+			}
+		}
+	}
+	if (!s->pbr_fs) {
+		s->pbr_fs      = pbr_shader("scene_pbr_mesh.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+		s->pbr_mask_fs = pbr_shader("scene_pbr_mesh_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
+	}
 	s->pbr_prepass_fs       = pbr_shader("scene_pbr_prepass.frag", AERON_SHADER_STAGE_FRAGMENT, 0, 0, 0);
 	s->pbr_prepass_mask_fs  = pbr_shader("scene_pbr_prepass_mask.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 0, 2);
 	/* Velocity stamping reads the same mesh-owned material resources. */

@@ -268,6 +268,13 @@ static int bb3d_lens_ensure(struct AeronScene3D* s) {
 	return s->bb_lens_pipes[0] != NULL;
 }
 
+AeronGraphicsPipeline* AeronSceneBb3d_CreateColorPipeline(struct AeronScene3D* s, AeronShader* fs, int blend) {
+	if (!s || !s->bb_vs || !fs) {
+		return NULL;
+	}
+	return bb3d_pipeline(s, s->bb_vs, fs, 0, blend);
+}
+
 int AeronSceneBb3d_Ensure(struct AeronScene3D* s) {
 	if (s->bb_tried) {
 		return s->bb_pipes[0] != NULL;

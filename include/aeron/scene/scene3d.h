@@ -465,6 +465,18 @@ AeronRenderTarget* AeronScene_SceneRt(AeronScene3D* scene);
  * runs the in-pass hooks, then closes it and runs BEFORE_POST. */
 int AeronScene_Render(AeronScene3D* scene, AeronCommandBuffer* cmd);
 
+/* Direct output (mobile VR): the next AeronScene_Render tonemaps in its
+ * shaders and resolves the forward pass straight into `target` (single
+ * sample, `format`, the scene's render size): no HDR intermediate, no
+ * separate tonemap pass and no bloom; blending happens in display space.
+ * Only taken with MSAA and without motion blur, SSAO or temporal
+ * upscaling; AeronScene_DirectOutputUsed() then says whether that Render
+ * did it (else the HDR scene RT holds the frame as usual). `tint` (rgb)
+ * scales the result; NULL = 1. Applies to one Render. */
+void AeronScene_SetDirectOutput(AeronScene3D* scene, AeronRenderTarget* target, AeronTextureFormat format,
+								const float tint[3]);
+int  AeronScene_DirectOutputUsed(const AeronScene3D* scene);
+
 /* Borrowed views for layer submission / game-side hook passes. */
 AeronTexture*      AeronScene_ColorTexture(AeronScene3D* scene);
 AeronRenderTarget* AeronScene_ColorRt(AeronScene3D* scene);

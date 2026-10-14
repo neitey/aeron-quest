@@ -201,6 +201,29 @@ struct AeronScene3D {
 	AeronTextureFormat color_format;
 	AeronSampleCount   sample_count;
 
+	/* Direct output (AeronScene_SetDirectOutput): the colour pipelines of
+	 * the other mode are kept here and swapped in for a direct render. */
+	AeronRenderTarget* direct_target; /* this Render only */
+	AeronTextureFormat direct_target_format;
+	float              direct_tint[3];
+	int                direct_active; /* inside a direct render */
+	int                direct_used;   /* the last Render was direct */
+	struct {
+		int                    tried, ready, logged;
+		AeronTextureFormat     format;
+		AeronRenderTarget*     msaa_rt;
+		int                    msaa_w, msaa_h;
+		AeronShader*           pbr_fs;
+		AeronShader*           pbr_mask_fs;
+		AeronGraphicsPipeline* pbr_pipes[AERON_PBR_PIPE_KIND_COUNT][3]; /* colour kinds only */
+		AeronShader*           bb_fs[3];
+		AeronGraphicsPipeline* bb_pipes[3];
+		AeronShader*           sky_fs;
+		AeronGraphicsPipeline* sky_pipe;
+		AeronShader*           overlay_fs[3];
+		AeronGraphicsPipeline* overlay_pipes[3][3];
+	} direct;
+
 	AeronSceneCamera camera;        /* render-resolution viewport */
 	AeronSceneCamera output_camera; /* caller's output-resolution viewport */
 	float            jittered_view_proj[16];
@@ -538,11 +561,18 @@ void AeronSceneBb3d_DrawVelocity(struct AeronScene3D* s, AeronRenderPass* pass);
  * attachment: the VS samples the scene depth texture. */
 void AeronSceneBb3d_DrawLens(struct AeronScene3D* s, AeronRenderPass* pass);
 void AeronSceneBb3d_Release(struct AeronScene3D* s);
+/* A colour-pass billboard pipeline for `blend` with fragment shader `fs`
+ * at the scene's current colour format (direct output). */
+AeronGraphicsPipeline* AeronSceneBb3d_CreateColorPipeline(struct AeronScene3D* s, AeronShader* fs, int blend);
 
 /* mesh_overlay.c */
 int  AeronSceneMeshOverlay_Prepare(struct AeronScene3D* scene, AeronCommandBuffer* command_buffer);
 void AeronSceneMeshOverlay_Draw(struct AeronScene3D* scene, AeronRenderPass* render_pass);
 void AeronSceneMeshOverlay_Release(struct AeronScene3D* scene);
+int  AeronSceneMeshOverlay_Ensure(struct AeronScene3D* scene);
+/* An overlay pipeline with fragment shader `fs` (direct output). */
+AeronGraphicsPipeline* AeronSceneMeshOverlay_CreatePipeline(struct AeronScene3D* scene, AeronShader* fs, int blend,
+															 AeronCullMode cull);
 
 /* post.c */
 int  AeronScenePost_EnsureSsao(struct AeronScene3D* s);

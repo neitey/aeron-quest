@@ -6,6 +6,7 @@
  */
 
 #include "internal.h"
+#include "aeron/scene/present.h"
 
 #include <SDL3/SDL.h>
 
@@ -349,10 +350,13 @@ AeronScene3D* AeronScene_Create(const AeronScene3DDesc* desc) {
 	return s;
 }
 
+static void scene_direct_release(AeronScene3D* s);
+
 void AeronScene_Destroy(AeronScene3D* s) {
 	if (!s) {
 		return;
 	}
+	scene_direct_release(s);
 	AeronSceneBb3d_Release(s);
 	AeronSceneMeshOverlay_Release(s);
 	AeronSceneDirectionalShadow_Release(s);
@@ -1444,7 +1448,226 @@ static int scene_finalize_output(AeronScene3D* s, AeronCommandBuffer* cmd, int m
 	return 1;
 }
 
+/* ---- Direct output (AeronScene_SetDirectOutput) ----------------------
+ *
+ * The forward pass renders straight into the caller's (sRGB) output: its
+ * colour shaders tonemap in place (scene_direct_output.hlsli; the uniform
+ * block is fragment slot 3) and the MSAA colour resolves into the target.
+ * The direct-mode colour pipelines live in s->direct and are swapped with
+ * the normal ones around a direct Render, so every draw path picks them
+ * up unchanged. */
+
+static const int k_direct_pbr_kinds[] = { AERON_PBR_PIPE_MESH,       AERON_PBR_PIPE_FORWARD,
+										  AERON_PBR_PIPE_MESH_MASK,  AERON_PBR_PIPE_FORWARD_MASK,
+										  AERON_PBR_PIPE_MESH_BLEND, AERON_PBR_PIPE_FORWARD_BLEND };
+
+static void scene_direct_swap(AeronScene3D* s) {
+#define DIRECT_SWAP(a, b)                                                                                    \
+	do {                                                                                                     \
+		char tmp_[sizeof(a)];                                                                                \
+		memcpy(tmp_, &(a), sizeof(a));                                                                       \
+		memcpy(&(a), &(b), sizeof(a));                                                                       \
+		memcpy(&(b), tmp_, sizeof(a));                                                                       \
+	} while (0)
+	DIRECT_SWAP(s->color_format, s->direct.format);
+	DIRECT_SWAP(s->pbr_fs, s->direct.pbr_fs);
+	DIRECT_SWAP(s->pbr_mask_fs, s->direct.pbr_mask_fs);
+	for (size_t k = 0; k < sizeof k_direct_pbr_kinds / sizeof k_direct_pbr_kinds[0]; ++k) {
+		DIRECT_SWAP(s->pbr_pipes[k_direct_pbr_kinds[k]], s->direct.pbr_pipes[k_direct_pbr_kinds[k]]);
+	}
+	DIRECT_SWAP(s->bb_pipes, s->direct.bb_pipes);
+	DIRECT_SWAP(s->sky_fs, s->direct.sky_fs);
+	DIRECT_SWAP(s->sky_pipe, s->direct.sky_pipe);
+	DIRECT_SWAP(s->overlay_pipes, s->direct.overlay_pipes);
+#undef DIRECT_SWAP
+}
+
+static void scene_direct_release(AeronScene3D* s) {
+	for (int k = 0; k < AERON_PBR_PIPE_KIND_COUNT; ++k) {
+		for (int c = 0; c < 3; ++c) {
+			if (s->direct.pbr_pipes[k][c]) {
+				Aeron_DestroyGraphicsPipeline(s->direct.pbr_pipes[k][c]);
+			}
+		}
+	}
+	for (int b = 0; b < 3; ++b) {
+		if (s->direct.bb_pipes[b]) {
+			Aeron_DestroyGraphicsPipeline(s->direct.bb_pipes[b]);
+		}
+		if (s->direct.bb_fs[b]) {
+			Aeron_DestroyShader(s->direct.bb_fs[b]);
+		}
+		if (s->direct.overlay_fs[b]) {
+			Aeron_DestroyShader(s->direct.overlay_fs[b]);
+		}
+		for (int c = 0; c < 3; ++c) {
+			if (s->direct.overlay_pipes[b][c]) {
+				Aeron_DestroyGraphicsPipeline(s->direct.overlay_pipes[b][c]);
+			}
+		}
+	}
+	if (s->direct.sky_pipe) {
+		Aeron_DestroyGraphicsPipeline(s->direct.sky_pipe);
+	}
+	if (s->direct.sky_fs) {
+		Aeron_DestroyShader(s->direct.sky_fs);
+	}
+	if (s->direct.pbr_fs) {
+		Aeron_DestroyShader(s->direct.pbr_fs);
+	}
+	if (s->direct.pbr_mask_fs) {
+		Aeron_DestroyShader(s->direct.pbr_mask_fs);
+	}
+	if (s->direct.msaa_rt) {
+		Aeron_DestroyRenderTarget(s->direct.msaa_rt);
+	}
+	memset(&s->direct, 0, sizeof s->direct);
+}
+
+/* Shaders and the always-needed pipelines, once; the MSAA colour target at
+ * the current size and format. Called unswapped. */
+static int scene_direct_ensure(AeronScene3D* s, AeronTextureFormat format) {
+	if (s->direct.tried && s->direct.format != format) {
+		scene_direct_release(s); /* another output format: start over */
+	}
+	if (!s->direct.tried) {
+		s->direct.tried  = 1;
+		s->direct.format = format;
+		/* The normal resources first: their lazy creation must not run
+		 * while the direct ones are swapped in. */
+		if (!AeronScenePbr_Ensure(s) || !AeronSceneBb3d_Ensure(s) || !scene_sky_ensure(s)) {
+			return 0;
+		}
+		AeronSceneMeshOverlay_Ensure(s);
+		const char* variant = getenv("AERON_PBR_SHADER");
+		const int   lite    = variant && strcmp(variant, "lite") == 0;
+		s->direct.pbr_fs = AeronSceneInternal_CompileShader(lite ? "scene_pbr_mesh_lite_direct.frag"
+																 : "scene_pbr_mesh_direct.frag",
+															AERON_SHADER_STAGE_FRAGMENT, 8, 4, 5);
+		s->direct.pbr_mask_fs = AeronSceneInternal_CompileShader(
+			lite ? "scene_pbr_mesh_mask_lite_direct.frag" : "scene_pbr_mesh_mask_direct.frag",
+			AERON_SHADER_STAGE_FRAGMENT, 8, 4, 5);
+		static const char* const k_bb[3] = { "scene_billboard3d_direct_alpha.frag", "scene_billboard3d_direct_add.frag",
+											  "scene_billboard3d_direct_pma.frag" };
+		static const char* const k_ov[3] = { "scene_mesh_overlay_direct_alpha.frag",
+											  "scene_mesh_overlay_direct_add.frag",
+											  "scene_mesh_overlay_direct_pma.frag" };
+		int ok = s->direct.pbr_fs && s->direct.pbr_mask_fs;
+		for (int b = 0; b < 3; ++b) {
+			s->direct.bb_fs[b] = AeronSceneInternal_CompileShader(k_bb[b], AERON_SHADER_STAGE_FRAGMENT, 1, 4, 0);
+			s->direct.overlay_fs[b] =
+				AeronSceneInternal_CompileShader(k_ov[b], AERON_SHADER_STAGE_FRAGMENT, 1, 4, 0);
+			ok = ok && s->direct.bb_fs[b] && s->direct.overlay_fs[b];
+		}
+		s->direct.sky_fs =
+			AeronSceneInternal_CompileShader("scene_sky_cube_direct.frag", AERON_SHADER_STAGE_FRAGMENT, 1, 4, 0);
+		ok = ok && s->direct.sky_fs &&
+			 Aeron_TextureFormatSupportsSampleCount(format, s->sample_count);
+		if (ok) {
+			/* Pipelines at the output format, built through the normal
+			 * paths with the direct shaders swapped in. */
+			scene_direct_swap(s);
+			for (size_t k = 0; k < sizeof k_direct_pbr_kinds / sizeof k_direct_pbr_kinds[0]; ++k) {
+				ok = ok && AeronScenePbr_Pipeline(s, k_direct_pbr_kinds[k], AERON_CULL_NONE) != NULL;
+			}
+			for (int b = 0; b < 3; ++b) {
+				s->bb_pipes[b] = AeronSceneBb3d_CreateColorPipeline(s, s->direct.bb_fs[b], b);
+				ok = ok && s->bb_pipes[b];
+				for (int c = 0; c < 3 && s->overlay_vs; ++c) {
+					s->overlay_pipes[b][c] =
+						AeronSceneMeshOverlay_CreatePipeline(s, s->direct.overlay_fs[b], b, (AeronCullMode)c);
+				}
+			}
+			scene_direct_swap(s);
+		}
+		s->direct.ready = ok;
+		Aeron_LogInfo("aeron.scene", "direct output %s (%s shaders)", ok ? "ready" : "unavailable",
+					  lite ? "lite" : "full");
+	}
+	if (!s->direct.ready) {
+		return 0;
+	}
+	if (!s->direct.msaa_rt || s->direct.msaa_w != s->render_w || s->direct.msaa_h != s->render_h) {
+		if (s->direct.msaa_rt) {
+			Aeron_DestroyRenderTarget(s->direct.msaa_rt);
+		}
+		s->direct.msaa_rt = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
+			.width        = s->render_w,
+			.height       = s->render_h,
+			.format       = format,
+			.sample_count = s->sample_count,
+			.debug_name   = "scene.direct_msaa_color",
+		});
+		s->direct.msaa_w = s->render_w;
+		s->direct.msaa_h = s->render_h;
+	}
+	return s->direct.msaa_rt != NULL;
+}
+
+static void scene_direct_bind_uniforms(AeronScene3D* s, AeronRenderPass* pass) {
+	const float u[12] = {
+		1.0f, /* exposure, as the tonemap pass */
+		(float)AeronScenePresent_TonemapOp(),
+		AeronScenePresent_EotfExponent(),
+		AeronScenePresent_AcesExposure(),
+		(float)AeronScenePresent_AgxLook(),
+		AeronScenePresent_AgxPunchyPower(),
+		AeronScenePresent_AgxPunchySaturation(),
+		0.0f,
+		s->direct_tint[0],
+		s->direct_tint[1],
+		s->direct_tint[2],
+		1.0f,
+	};
+	Aeron_BindUniformData(pass, AERON_SHADER_STAGE_FRAGMENT, 3, u, sizeof u);
+}
+
+void AeronScene_SetDirectOutput(AeronScene3D* s, AeronRenderTarget* target, AeronTextureFormat format,
+								const float tint[3]) {
+	if (!s) {
+		return;
+	}
+	s->direct_target        = target;
+	s->direct_target_format = format;
+	for (int c = 0; c < 3; ++c) {
+		s->direct_tint[c] = tint ? tint[c] : 1.0f;
+	}
+}
+
+int AeronScene_DirectOutputUsed(const AeronScene3D* s) { return s && s->direct_used; }
+
+static int scene_render_impl(AeronScene3D* s, AeronCommandBuffer* cmd);
+
 int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
+	if (!s || !cmd) {
+		return 0;
+	}
+	s->direct_used = 0;
+	/* Direct only where the forward pass is the last word: MSAA, and no
+	 * post effect that reads the HDR colour afterwards. */
+	const int direct = s->direct_target && s->sample_count != AERON_SAMPLE_COUNT_1 &&
+					   s->temporal_active_mode == AERON_TEMPORAL_OFF && s->post.mb_quality <= 0 &&
+					   !(s->post.ssao_quality > 0 && s->post.ssao_intensity > 0.0f) &&
+					   scene_direct_ensure(s, s->direct_target_format);
+	if (s->direct_target && !direct && !s->direct.logged) {
+		s->direct.logged = 1;
+		Aeron_LogWarn("aeron.scene", "direct output requested but not possible here: rendering via HDR");
+	}
+	if (!direct) {
+		s->direct_target = NULL;
+		return scene_render_impl(s, cmd);
+	}
+	scene_direct_swap(s);
+	s->direct_active = 1;
+	const int ok     = scene_render_impl(s, cmd);
+	s->direct_active = 0;
+	scene_direct_swap(s);
+	s->direct_target = NULL; /* one Render */
+	s->direct_used   = ok;
+	return ok;
+}
+
+static int scene_render_impl(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	if (!s || !cmd) {
 		return 0;
 	}
@@ -1619,8 +1842,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		 * EQUAL/no-write. MSAA clears independent transient depth and
 		 * resolves only color because SDL GPU does not resolve depth. */
 		pass = Aeron_BeginRenderPass(&(AeronRenderPassDesc) {
-			.color_target         = msaa_active ? s->msaa_color_rt : s->color_rt,
-			.color_resolve_target = msaa_active ? s->color_rt : NULL,
+			.color_target         = s->direct_active ? s->direct.msaa_rt : msaa_active ? s->msaa_color_rt : s->color_rt,
+			.color_resolve_target = s->direct_active ? s->direct_target : msaa_active ? s->color_rt : NULL,
 			.depth_target         = msaa_active ? s->msaa_depth_rt : s->depth_rt,
 			.viewport             = s->camera.viewport,
 			.clear_color          = 1,
@@ -1633,6 +1856,9 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 		});
 		if (!pass) {
 			return scene_render_failure(s, cmd, "Scene forward pass creation failed");
+		}
+		if (s->direct_active) {
+			scene_direct_bind_uniforms(s, pass);
 		}
 		if (!s->sky_last && !scene_draw_sky_layers(s, cmd, pass)) {
 			Aeron_EndRenderPass(pass);
@@ -1662,7 +1888,8 @@ int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
 			Aeron_EndRenderPass(pass);
 			return scene_render_failure(s, cmd, "Scene PBR transparent recording failed");
 		}
-		scene_run_after_meshes(s, cmd, pass, msaa_active ? s->msaa_color_rt : s->color_rt);
+		scene_run_after_meshes(s, cmd, pass,
+							   s->direct_active ? s->direct.msaa_rt : msaa_active ? s->msaa_color_rt : s->color_rt);
 		Aeron_GpuDebugMarker(cmd, "Overlay billboards");
 		AeronSceneBb3d_DrawStage(s, pass, AERON_SCENE_BILLBOARD_STAGE_OVERLAY);
 

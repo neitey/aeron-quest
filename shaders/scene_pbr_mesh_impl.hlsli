@@ -50,6 +50,12 @@
 #include "scene_pbr_vsout.hlsli"
 #include "srgb.hlsli"
 #include "scene_pbr_material_alpha.hlsli"
+#ifndef AERON_PBR_DIRECT_OUTPUT
+#define AERON_PBR_DIRECT_OUTPUT 0
+#endif
+#if AERON_PBR_DIRECT_OUTPUT
+#include "scene_direct_output.hlsli"
+#endif
 
 Texture2D    g_normal       : register(t1, space2);
 SamplerState g_normal_sampler : register(s1, space2);
@@ -367,6 +373,10 @@ FSOut main(PbrForwardVSOut i, bool is_front : SV_IsFrontFace)
     float alpha = ((m.flags & GLTF_MATERIAL_ALPHA_BLEND) != 0u)
                       ? saturate(albedo_tex.a * m.base_color_factor.a)
                       : 1.0f;
+#if AERON_PBR_DIRECT_OUTPUT
+    _out.color = direct_output(lit, alpha, i.position.xy);
+#else
     _out.color = float4(lit, alpha);
+#endif
     return _out;
 }

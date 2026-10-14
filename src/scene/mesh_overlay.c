@@ -154,6 +154,20 @@ static int ensure_overlay_resources(AeronScene3D* scene) {
 	return scene->overlay_pipes[0][0] != NULL;
 }
 
+int AeronSceneMeshOverlay_Ensure(AeronScene3D* scene) { return scene && ensure_overlay_resources(scene); }
+
+AeronGraphicsPipeline* AeronSceneMeshOverlay_CreatePipeline(AeronScene3D* scene, AeronShader* fs, int blend,
+															 AeronCullMode cull) {
+	if (!scene || !scene->overlay_vs || !fs) {
+		return NULL;
+	}
+	AeronShader* saved = scene->overlay_fs;
+	scene->overlay_fs = fs;
+	AeronGraphicsPipeline* pipeline = create_overlay_pipeline(scene, blend, cull);
+	scene->overlay_fs = saved;
+	return pipeline;
+}
+
 int AeronSceneMeshOverlay_Prepare(AeronScene3D* scene, AeronCommandBuffer* command_buffer) {
 	if (!scene || scene->overlay_vertex_count == 0 || !ensure_overlay_resources(scene)) {
 		return 0;

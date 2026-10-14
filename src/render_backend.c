@@ -581,6 +581,10 @@ static SDL_GPUTextureFormat Aeron_ToSdlTextureFormat(AeronTextureFormat format) 
 			return SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM;
 		case AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB:
 			return SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB;
+		case AERON_TEXTURE_FORMAT_ASTC_4X4_UNORM:
+			return SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM;
+		case AERON_TEXTURE_FORMAT_ASTC_4X4_SRGB:
+			return SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB;
 		default:
 			return SDL_GPU_TEXTUREFORMAT_INVALID;
 	}
@@ -830,7 +834,7 @@ static int Aeron_IsDepthTextureFormat(AeronTextureFormat format) {
 }
 
 static int Aeron_IsCompressedTextureFormat(AeronTextureFormat format) {
-	return format >= AERON_TEXTURE_FORMAT_BC1_RGBA_UNORM && format <= AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB;
+	return format >= AERON_TEXTURE_FORMAT_BC1_RGBA_UNORM && format <= AERON_TEXTURE_FORMAT_ASTC_4X4_SRGB;
 }
 
 /* Renderable color formats: anything that is not depth, compressed, or unknown.
@@ -1332,7 +1336,7 @@ static SDL_GPUGraphicsPipeline* Aeron_PipelineForTarget(SDL_GPUTextureFormat tar
 static int Aeron_IsSrgbTextureFormat(AeronTextureFormat format) {
 	return format == AERON_TEXTURE_FORMAT_RGBA8_SRGB || format == AERON_TEXTURE_FORMAT_BGRA8_SRGB ||
 		   format == AERON_TEXTURE_FORMAT_BC1_RGBA_SRGB || format == AERON_TEXTURE_FORMAT_BC3_RGBA_SRGB ||
-		   format == AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB;
+		   format == AERON_TEXTURE_FORMAT_BC7_RGBA_SRGB || format == AERON_TEXTURE_FORMAT_ASTC_4X4_SRGB;
 }
 
 static int Aeron_IsSrgbSdlTextureFormat(SDL_GPUTextureFormat format) {

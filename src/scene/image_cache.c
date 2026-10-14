@@ -24,6 +24,7 @@
 
 #include "aeron/scene/ktx2_reader.h"
 #include "rgba_upload.h"
+#include "astc_transcode.h"
 
 /* ---------- resident store ---------- */
 
@@ -281,6 +282,84 @@ AeronTexture* Aeron_ImageUploadKtx2(AeronCommandBuffer* cmd, const Ktx2* ktx, co
 	}
 	free(uploads);
 
+	return tex;
+}
+
+AeronTexture* Aeron_ImageUploadKtx2Compressed(AeronCommandBuffer* cmd, const Ktx2* ktx, const char* debug_name) {
+	if (!cmd || !ktx) {
+		return NULL;
+	}
+	const AeronTextureFormat source = ktx2_format(ktx);
+	const int srgb = source == AERON_TEXTURE_FORMAT_RGBA8_SRGB;
+	const AeronTextureFormat astc = srgb ? AERON_TEXTURE_FORMAT_ASTC_4X4_SRGB : AERON_TEXTURE_FORMAT_ASTC_4X4_UNORM;
+	static int checked, supported[2];
+	if (!checked) {
+		checked = 1;
+		supported[0] = AeronAstc_Available() &&
+					   Aeron_TextureFormatSupported(AERON_TEXTURE_FORMAT_ASTC_4X4_UNORM, AERON_TEXTURE_USAGE_SAMPLED);
+		supported[1] = AeronAstc_Available() &&
+					   Aeron_TextureFormatSupported(AERON_TEXTURE_FORMAT_ASTC_4X4_SRGB, AERON_TEXTURE_USAGE_SAMPLED);
+		Aeron_LogInfo("aeron.scene", "ASTC 4x4 mesh textures: %s",
+					  supported[0] && supported[1] ? "on" : "not available (uncompressed)");
+	}
+	const int w = ktx2_width(ktx), h = ktx2_height(ktx), nl = ktx2_level_count(ktx);
+	if ((source != AERON_TEXTURE_FORMAT_RGBA8_UNORM && !srgb) || !supported[srgb] || ktx2_face_count(ktx) != 1 ||
+		w <= 0 || h <= 0 || nl <= 0) {
+		return Aeron_ImageUploadKtx2(cmd, ktx, debug_name);
+	}
+	uint8_t** blocks = (uint8_t**)calloc((size_t)nl, sizeof *blocks);
+	AeronTextureUploadDesc* uploads = (AeronTextureUploadDesc*)calloc((size_t)nl, sizeof *uploads);
+	int ok = blocks && uploads;
+	for (int i = 0; ok && i < nl; ++i) {
+		const Ktx2Level lv = ktx2_level_face(ktx, i, 0);
+		size_t size = 0;
+		ok = lv.data && lv.width > 0 && lv.height > 0 && lv.size >= (size_t)lv.width * (size_t)lv.height * 4u;
+		if (ok) {
+			blocks[i] = AeronAstc_Encode4x4((const uint8_t*)lv.data, lv.width, lv.height, srgb, &size);
+			ok = blocks[i] && size <= UINT32_MAX;
+		}
+		if (ok) {
+			uploads[i] = (AeronTextureUploadDesc) {
+				.mip_level = i,
+				.width     = lv.width,
+				.height    = lv.height,
+				.raw_data  = blocks[i],
+				.raw_size  = (uint32_t)size,
+			};
+		}
+	}
+	AeronTexture* tex = NULL;
+	if (ok) {
+		tex = Aeron_CreateTexture(&(AeronTextureDesc) {
+			.width      = w,
+			.height     = h,
+			.mip_count  = nl,
+			.format     = astc,
+			.usage      = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_TRANSFER_DST,
+			.debug_name = debug_name,
+		});
+		if (tex) {
+			for (int i = 0; i < nl; ++i) {
+				uploads[i].texture = tex;
+			}
+			if (!Aeron_UploadTextureBatchCmd(cmd, uploads, (uint32_t)nl)) {
+				Aeron_DestroyTexture(tex);
+				tex = NULL;
+			}
+		}
+	}
+	if (blocks) {
+		for (int i = 0; i < nl; ++i) {
+			free(blocks[i]);
+		}
+	}
+	free(blocks);
+	free(uploads);
+	if (!tex) {
+		Aeron_LogWarn("aeron.scene", "ASTC compression failed (%s): uploading uncompressed",
+					  debug_name ? debug_name : "<unnamed>");
+		return Aeron_ImageUploadKtx2(cmd, ktx, debug_name);
+	}
 	return tex;
 }
 
