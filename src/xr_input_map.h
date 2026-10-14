@@ -27,6 +27,9 @@
  *   right thumbstick click        -> RIGHT_STICK             -> (unbound)
  *   left menu button              -> GUIDE (consumed as Esc by xr.c)
  *
+ * Left-handed controls (AERON_XR_LEFT_HANDED=1) swap the two controllers
+ * before this mapping (xr_input.c), so the table reads mirrored.
+ *
  * The throttle is a "virtual lever": pushing the left stick forward/back
  * moves it and it stays where it was left, like a HOTAS throttle.
  */

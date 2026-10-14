@@ -109,6 +109,13 @@ void Aeron_XrSetFlightButtons(int enabled);
 /* Pops the oldest queued flight-button press. Returns 0 when none is
  * queued. */
 int Aeron_XrPollButton(AeronXrButton* button, int* shifted);
+/* Left-handed controls (AERON_XR_LEFT_HANDED=1, read every frame): the
+ * two controllers trade their game roles - thumbsticks, triggers, grips,
+ * stick clicks, A/B with X/Y - so AERON_XR_BUTTON_A and the virtual
+ * gamepad's "right" controls come from the left controller and so on.
+ * What a hand does physically (Aeron_XrGetHand, grip captures, the menu
+ * pointer on the right controller, the menu button) is not swapped. */
+int Aeron_XrLeftHanded(void);
 /* A tracked VR controller for touch panels the game draws itself. */
 typedef struct AeronXrHand {
 	int   valid;          /* pose tracked this frame */

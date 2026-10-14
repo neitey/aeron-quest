@@ -79,6 +79,32 @@ void Aeron_XrSetPointerEnabled(int enabled) { g_xr_pointer_enabled = enabled != 
 
 void Aeron_XrSetMenuKeys(int enabled) { g_xr_menu_keys = enabled != 0; }
 
+int Aeron_XrLeftHanded(void) {
+	const char* v = SDL_getenv("AERON_XR_LEFT_HANDED");
+	return v && v[0] == '1';
+}
+
+/* Left-handed: the controllers trade their game roles (see aeron.h). */
+static void Aeron_XrMirrorTouch(AeronXrTouchState* t) {
+	float f[2];
+	float v;
+	int   i;
+	memcpy(f, t->left_stick, sizeof f);
+	memcpy(t->left_stick, t->right_stick, sizeof f);
+	memcpy(t->right_stick, f, sizeof f);
+	v = t->left_trigger; t->left_trigger = t->right_trigger; t->right_trigger = v;
+	v = t->left_grip; t->left_grip = t->right_grip; t->right_grip = v;
+	i = t->active_left; t->active_left = t->active_right; t->active_right = i;
+	i = t->left_stick_click; t->left_stick_click = t->right_stick_click; t->right_stick_click = i;
+	i = t->a; t->a = t->x; t->x = i;
+	i = t->b; t->b = t->y; t->y = i;
+}
+
+/* The physical hand behind a game-side (logical) hand. */
+static int Aeron_XrPhysicalHand(int logical) {
+	return Aeron_XrLeftHanded() ? 1 - logical : logical; /* two hands: 0 left, 1 right */
+}
+
 void Aeron_XrSetFlightButtons(int enabled) {
 	g_xr_flight_buttons = enabled != 0;
 	if (!g_xr_flight_buttons) {
@@ -614,7 +640,8 @@ static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
 	}
 	for (b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
 		if (b == AERON_XR_BUTTON_LEFT_TRIGGER &&
-			(g_xr_trigger_captured[AERON_XR_HAND_LEFT] || g_xr_trigger_latched[AERON_XR_HAND_LEFT])) {
+			(g_xr_trigger_captured[Aeron_XrPhysicalHand(AERON_XR_HAND_LEFT)] ||
+			 g_xr_trigger_latched[Aeron_XrPhysicalHand(AERON_XR_HAND_LEFT)])) {
 			g_in.button_prev[b] = now[b]; /* owned by a game UI */
 			continue;
 		}
@@ -853,6 +880,13 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 		touch.right_grip = 0.0f;
 	}
 
+	/* The menu pointer stays on the right controller: it gets the physical
+	 * state; everything else the game-side one. */
+	const AeronXrTouchState physical = touch;
+	if (Aeron_XrLeftHanded()) {
+		Aeron_XrMirrorTouch(&touch);
+	}
+
 	if ((touch.active_left || touch.active_right) && !g_in.logged_active) {
 		Aeron_LogInfo("aeron.xr", "controllers active (left %d, right %d)", touch.active_left,
 					  touch.active_right);
@@ -925,11 +959,15 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 				mapped.active_right = 1;
 				mapped.extra_roll   = g_xr_vstick[2];
 			}
-			if (g_xr_trigger_captured[AERON_XR_HAND_RIGHT] || g_xr_trigger_latched[AERON_XR_HAND_RIGHT]) {
-				mapped.right_trigger = 0.0f; /* owned by a game UI: no fire */
-			}
-			if (g_xr_trigger_captured[AERON_XR_HAND_LEFT] || g_xr_trigger_latched[AERON_XR_HAND_LEFT]) {
-				mapped.left_trigger = 0.0f;
+			{
+				const int fire = Aeron_XrPhysicalHand(AERON_XR_HAND_RIGHT);
+				const int other = Aeron_XrPhysicalHand(AERON_XR_HAND_LEFT);
+				if (g_xr_trigger_captured[fire] || g_xr_trigger_latched[fire]) {
+					mapped.right_trigger = 0.0f; /* owned by a game UI: no fire */
+				}
+				if (g_xr_trigger_captured[other] || g_xr_trigger_latched[other]) {
+					mapped.left_trigger = 0.0f;
+				}
 			}
 			AeronXrTouchMapper_Map(&g_in.mapper, &mapped, dt_seconds, pad);
 		}
@@ -950,7 +988,7 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 		}
 	}
 
-	Aeron_XrApplyPointer(input, &touch);
+	Aeron_XrApplyPointer(input, &physical);
 }
 
 int Aeron_XrRumble(uint16_t low, uint16_t high, uint32_t duration_ms) {
