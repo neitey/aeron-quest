@@ -46,6 +46,17 @@ typedef struct AeronXr {
 	XrSwapchain          screen_swapchain;
 	SDL_GPUTexture**     screen_images;
 	int                  screen_has_released_image;
+	/* Right-eye virtual screen, created on first use: when a frame's 2D
+	 * layers differ per eye (Aeron texture layers with a right_eye_texture),
+	 * the screen is composed twice and shown as one quad per eye. */
+	SDL_GPUTexture*  screen_right_texture;
+	XrSwapchain      screen_right_swapchain;
+	SDL_GPUTexture** screen_right_images;
+	int              screen_right_failed;
+	int              screen_right_acquired;
+	int              screen_right_has_released_image;
+	int              screen_right_this_frame;
+	int              screen_stereo_last; /* the last composed frame showed each eye its own image */
 	float                screen_distance_m;
 	float                screen_width_m;
 	float                screen_height_offset_m;
@@ -131,10 +142,11 @@ XrPath      Aeron_XrPath(const char* string);
 /* xr_stereo.c */
 int      Aeron_XrStereoInit(void);
 void     Aeron_XrStereoShutdown(void);
-/* `screen` (may be NULL): the virtual screen quad of a backdrop frame,
- * placed right above the projection layer (under any panels). */
+/* `screens` (screen_count may be 0): the virtual screen quad of a backdrop
+ * frame (one per eye when the screen is stereo), placed right above the
+ * projection layer (under any panels). */
 uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity,
-									  const XrCompositionLayerBaseHeader* screen);
+									  const XrCompositionLayerBaseHeader* const* screens, int screen_count);
 
 /* xr_input.c */
 int  Aeron_XrInputInit(void);

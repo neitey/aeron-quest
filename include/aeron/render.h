@@ -354,6 +354,11 @@ typedef struct AeronTextureLayerDesc {
 	float bias_rgba[4];
 	/* Optional scissor in logical coordinates; zero width/height disables it. */
 	AeronRectI scissor;
+	/* Optional right-eye image (same size, same layout) for stereo
+	 * presentation: on an XR virtual screen the right eye then sees this
+	 * texture in place of `texture`, which the left eye (and a flat window)
+	 * sees. NULL = the same image for both eyes. */
+	AeronTexture* right_eye_texture;
 } AeronTextureLayerDesc;
 
 /* Deferred draw layer for clients that can render a complete image directly

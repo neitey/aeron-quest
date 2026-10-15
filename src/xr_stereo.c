@@ -870,7 +870,7 @@ static void Aeron_XrFillQuad(XrCompositionLayerQuad* quad, int slot, const Aeron
 /* Releases acquired images and appends this frame's layers. Returns the
  * number of layers written (0 when the frame was not stereo). */
 uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity,
-									  const XrCompositionLayerBaseHeader* screen) {
+									  const XrCompositionLayerBaseHeader* const* screens, int screen_count) {
 	uint32_t count = 0;
 	int      slot;
 	int      eyes_ok = 1;
@@ -917,8 +917,8 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 	g_st.projection.viewCount = AERON_XR_EYE_COUNT;
 	g_st.projection.views     = g_st.proj_views;
 	layers[count++]           = (const XrCompositionLayerBaseHeader*)&g_st.projection;
-	if (screen && count < capacity) {
-		layers[count++] = screen;
+	for (int i = 0; i < screen_count && count < capacity; ++i) {
+		layers[count++] = screens[i];
 	}
 
 	/* World HUD first: the head HUD is composited on top of it. */

@@ -66,6 +66,11 @@ void                 Aeron_XrScreenSize(int* width, int* height);
 
 /* Records the screen -> swapchain image copy (acquiring the image). */
 int Aeron_XrCopyScreenToSwapchain(SDL_GPUCommandBuffer* command_buffer);
+/* The right eye's screen, for frames whose 2D layers differ per eye
+ * (created on first use; NULL when unavailable). Compose into it, then
+ * copy it: the frame then shows each eye its own screen image. */
+SDL_GPUTexture* Aeron_XrScreenRightTexture(void);
+int             Aeron_XrCopyScreenRightToSwapchain(SDL_GPUCommandBuffer* command_buffer);
 /* Optional capture of the virtual screen for headless verification. Call
  * after recording the composition and before submission. Returns 1 when a
  * capture was recorded; the caller must then submit with a fence and pass it
