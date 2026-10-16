@@ -80,6 +80,12 @@ void Aeron_XrSetPointerEnabled(int enabled);
  * Escape, and the virtual gamepad reports neutral sticks and no buttons.
  * Disabled by default. */
 void Aeron_XrSetMenuKeys(int enabled);
+/* While blocked the controllers reach nothing (no pointer, keys, buttons
+ * or gamepad); only presses of the right controller's A are latched, for
+ * Aeron_XrTakeAPressed (which clears the latch). A held A must be let go
+ * before it counts. */
+void Aeron_XrSetInputBlocked(int blocked);
+int  Aeron_XrTakeAPressed(void);
 
 /* Controller buttons a game can bind to its own actions in flight. */
 typedef enum AeronXrButton {

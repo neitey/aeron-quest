@@ -79,6 +79,25 @@ void Aeron_XrSetPointerEnabled(int enabled) { g_xr_pointer_enabled = enabled != 
 
 void Aeron_XrSetMenuKeys(int enabled) { g_xr_menu_keys = enabled != 0; }
 
+/* A game's title gate: the controllers reach nothing but the A latch. */
+static int g_xr_input_blocked;
+static int g_xr_blocked_a_previous = 1; /* a held A must be let go first */
+static int g_xr_blocked_a_pressed;
+
+void Aeron_XrSetInputBlocked(int blocked) {
+	if (blocked && !g_xr_input_blocked) {
+		g_xr_blocked_a_previous = 1;
+		g_xr_blocked_a_pressed  = 0;
+	}
+	g_xr_input_blocked = blocked != 0;
+}
+
+int Aeron_XrTakeAPressed(void) {
+	const int pressed = g_xr_blocked_a_pressed;
+	g_xr_blocked_a_pressed = 0;
+	return pressed;
+}
+
 int Aeron_XrLeftHanded(void) {
 	const char* v = SDL_getenv("AERON_XR_LEFT_HANDED");
 	return v && v[0] == '1';
@@ -883,6 +902,21 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	/* The menu pointer stays on the right controller: it gets the physical
 	 * state; everything else the game-side one. */
 	const AeronXrTouchState physical = touch;
+	if (g_xr_input_blocked) {
+		/* Nothing reaches the game but the A press it waits for. */
+		if (physical.a && !g_xr_blocked_a_previous) {
+			g_xr_blocked_a_pressed = 1;
+		}
+		g_xr_blocked_a_previous = physical.a;
+		Aeron_XrReleaseMenuKeys(input);
+		slot = Aeron_XrFindVirtualSlot(input);
+		if (slot >= 0 && slot == g_in.slot) {
+			AeronControllerSnapshot* idle = &input->controllers[slot];
+			memset(idle->gamepad_axes, 0, sizeof idle->gamepad_axes);
+			idle->gamepad_buttons = idle->gamepad_pressed_buttons = idle->gamepad_released_buttons = 0;
+		}
+		return;
+	}
 	if (Aeron_XrLeftHanded()) {
 		Aeron_XrMirrorTouch(&touch);
 	}
