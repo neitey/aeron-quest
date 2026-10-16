@@ -359,6 +359,12 @@ typedef struct AeronTextureLayerDesc {
 	 * texture in place of `texture`, which the left eye (and a flat window)
 	 * sees. NULL = the same image for both eyes. */
 	AeronTexture* right_eye_texture;
+	/* Optional: on an XR virtual screen the right eye sees this layer moved
+	 * this many logical pixels sideways (and its scissor with it). Negative
+	 * moves it toward the viewer's left: a crossed disparity, so the layer
+	 * appears in front of the screen (e.g. a cursor on the screen's glass).
+	 * Zero = both eyes see it in place. */
+	int right_eye_offset_x;
 } AeronTextureLayerDesc;
 
 /* Deferred draw layer for clients that can render a complete image directly

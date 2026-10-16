@@ -169,6 +169,9 @@ void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count);
  * 2D layers on the virtual screen quad on top (menus in a VR room). The
  * mouse pointer keeps working on the screen. */
 void Aeron_XrStereoCommitBackdrop(void);
+/* Dims the composed 2D layers on the XR virtual screen (1 = as composed,
+ * 0 = black), e.g. to fade a menu screen out before it is hidden. */
+void Aeron_XrSetScreenFade(float fade);
 
 #ifdef __cplusplus
 }

@@ -1772,11 +1772,17 @@ static int Aeron_ComposeLayersEye(SDL_GPUCommandBuffer* command_buffer, SDL_GPUT
 														layer->u.texture.right_eye_texture->texture
 													? layer->u.texture.right_eye_texture
 													: layer->u.texture.texture;
+			AeronRectI          eye_rect    = layer->u.texture.logical_rect;
+			AeronRectI          eye_scissor = layer->u.texture.scissor;
+			if (right_eye) {
+				eye_rect.x += layer->u.texture.right_eye_offset_x;
+				eye_scissor.x += layer->u.texture.right_eye_offset_x;
+			}
 			AeronGpuDebug_Marker(command_buffer, "Texture layer");
-			Aeron_ProjectLogicalRect(&content_rect, &layer->u.texture.logical_rect, &dst_rect);
+			Aeron_ProjectLogicalRect(&content_rect, &eye_rect, &dst_rect);
 			scissor = NULL;
-			if (layer->u.texture.scissor.width > 0 && layer->u.texture.scissor.height > 0) {
-				Aeron_ProjectLogicalRect(&content_rect, &layer->u.texture.scissor, &scissor_rect);
+			if (eye_scissor.width > 0 && eye_scissor.height > 0) {
+				Aeron_ProjectLogicalRect(&content_rect, &eye_scissor, &scissor_rect);
 				scissor = &scissor_rect;
 			}
 			if (!Aeron_DrawTexture(
@@ -1856,8 +1862,9 @@ static int Aeron_ComposeLayers(SDL_GPUCommandBuffer* command_buffer, SDL_GPUText
 static int Aeron_LayersHaveRightEye(void) {
 	for (int i = 0; i < g_aeron.render_layer_count; ++i) {
 		const AeronRenderLayer* layer = &g_aeron.render_layers[i];
-		if (layer->kind == AERON_RENDER_LAYER_TEXTURE && layer->u.texture.right_eye_texture &&
-			layer->u.texture.right_eye_texture->texture) {
+		if (layer->kind == AERON_RENDER_LAYER_TEXTURE &&
+			((layer->u.texture.right_eye_texture && layer->u.texture.right_eye_texture->texture) ||
+			 layer->u.texture.right_eye_offset_x != 0)) {
 			return 1;
 		}
 	}
@@ -1866,16 +1873,21 @@ static int Aeron_LayersHaveRightEye(void) {
 
 /* The XR virtual screen: the shared image (the left eye's), and the right
  * eye's when the layers differ per eye. */
+/* The XR virtual screen's brightness (Aeron_XrSetScreenFade). */
+static float g_xr_screen_fade = 1.0f;
+
+void Aeron_XrSetScreenFade(float fade) { g_xr_screen_fade = fade < 0.0f ? 0.0f : (fade > 1.0f ? 1.0f : fade); }
+
 static int Aeron_ComposeXrScreen(SDL_GPUCommandBuffer* command_buffer, int screen_w, int screen_h) {
 	int right_ok = 0;
 	int ok = Aeron_ComposeLayers(command_buffer, Aeron_XrScreenTexture(), (Uint32)screen_w, (Uint32)screen_h,
-								 Aeron_XrScreenFormat(), 1.0f, 0.0f, 0, "XR virtual screen");
+								 Aeron_XrScreenFormat(), g_xr_screen_fade, 0.0f, 0, "XR virtual screen");
 	if (ok && Aeron_LayersHaveRightEye()) {
 		SDL_GPUTexture* right = Aeron_XrScreenRightTexture();
 		if (right) {
 			/* Optional: on failure both eyes see the shared image. */
 			right_ok = Aeron_ComposeLayersEye(command_buffer, right, (Uint32)screen_w, (Uint32)screen_h,
-											  Aeron_XrScreenFormat(), 1.0f, 0.0f, 0,
+											  Aeron_XrScreenFormat(), g_xr_screen_fade, 0.0f, 0,
 											  "XR virtual screen (right eye)", 1);
 			if (!right_ok) {
 				Aeron_LogWarn("aeron.xr", "right-eye screen composition failed; showing one image");
