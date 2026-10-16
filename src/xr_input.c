@@ -104,13 +104,22 @@ int Aeron_XrTakeAPressed(void) {
 	return pressed;
 }
 
-/* B pressed in the menus (pointer on, not keyboard menus). */
+/* B and X pressed in the menus (pointer on, not keyboard menus, input not
+ * blocked). */
 static int g_xr_menu_b_previous = 1;
 static int g_xr_menu_b_pressed;
+static int g_xr_menu_x_previous = 1;
+static int g_xr_menu_x_pressed;
 
 int Aeron_XrTakeMenuBPressed(void) {
 	const int pressed = g_xr_menu_b_pressed;
 	g_xr_menu_b_pressed = 0;
+	return pressed;
+}
+
+int Aeron_XrTakeMenuXPressed(void) {
+	const int pressed = g_xr_menu_x_pressed;
+	g_xr_menu_x_pressed = 0;
 	return pressed;
 }
 
@@ -925,11 +934,15 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	 * state; everything else the game-side one. */
 	const AeronXrTouchState physical = touch;
 	{
-		const int b = physical.b && g_xr_pointer_enabled && !g_xr_menu_keys;
-		if (b && !g_xr_menu_b_previous) {
+		const int menus = g_xr_pointer_enabled && !g_xr_menu_keys && !g_xr_input_blocked;
+		if (menus && physical.b && !g_xr_menu_b_previous) {
 			g_xr_menu_b_pressed = 1;
 		}
+		if (menus && physical.x && !g_xr_menu_x_previous) {
+			g_xr_menu_x_pressed = 1;
+		}
 		g_xr_menu_b_previous = physical.b;
+		g_xr_menu_x_previous = physical.x;
 	}
 	if (g_xr_input_blocked) {
 		/* Nothing reaches the game but the A (or right trigger) press it
