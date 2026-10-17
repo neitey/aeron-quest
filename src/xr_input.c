@@ -11,8 +11,8 @@
  * - Menu-keys mode (Aeron_XrSetMenuKeys) turns sticks and face buttons into
  *   arrow/Enter/Space/Escape keys for keyboard-only menus.
  * - Flight-buttons mode (Aeron_XrSetFlightButtons) queues face-button,
- *   left-trigger, stick-click and grip presses (left grip = shift layer,
- *   right-stick flicks while shifted) for the game to bind to its actions.
+ *   left-trigger, stick-click and right-grip presses for the game to bind
+ *   to its actions (the left grip is the game's: its quick wheel).
  * - Rumble requests for the virtual gamepad become controller haptics.
  */
 
@@ -740,7 +740,6 @@ static void Aeron_XrApplyMenuKeys(AeronInputSnapshot* input, const AeronXrTouchS
 /* Records flight-button edges. Always tracks state so that turning the mode
  * on mid-press does not produce a phantom press. */
 static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
-	const int shifted = touch->active_left && touch->left_grip >= 0.5f;
 	uint8_t   now[AERON_XR_BUTTON_COUNT];
 	int       b;
 
@@ -756,27 +755,6 @@ static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
 		touch->left_trigger >= (g_in.button_prev[AERON_XR_BUTTON_LEFT_TRIGGER] ? 0.35f : 0.5f));
 	now[AERON_XR_BUTTON_RIGHT_GRIP]   = (uint8_t)(touch->active_right &&
 		touch->right_grip >= (g_in.button_prev[AERON_XR_BUTTON_RIGHT_GRIP] ? 0.35f : 0.5f));
-	if (shifted && touch->active_right) {
-		const float x       = touch->right_stick[0];
-		const float y       = touch->right_stick[1];
-		const float mag     = fmaxf(fabsf(x), fabsf(y));
-		int         was_any = 0;
-		for (b = AERON_XR_BUTTON_FLICK_UP; b <= AERON_XR_BUTTON_FLICK_RIGHT; ++b) {
-			was_any |= g_in.button_prev[b];
-		}
-		if (was_any && mag > 0.35f) {
-			/* Hold the flick until the stick comes back to centre. */
-			for (b = AERON_XR_BUTTON_FLICK_UP; b <= AERON_XR_BUTTON_FLICK_RIGHT; ++b) {
-				now[b] = g_in.button_prev[b];
-			}
-		} else if (mag >= 0.7f) {
-			if (fabsf(x) > fabsf(y)) {
-				now[x > 0.0f ? AERON_XR_BUTTON_FLICK_RIGHT : AERON_XR_BUTTON_FLICK_LEFT] = 1;
-			} else {
-				now[y > 0.0f ? AERON_XR_BUTTON_FLICK_UP : AERON_XR_BUTTON_FLICK_DOWN] = 1;
-			}
-		}
-	}
 	for (b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
 		if (b == AERON_XR_BUTTON_LEFT_TRIGGER &&
 			(g_xr_trigger_captured[Aeron_XrPhysicalHand(AERON_XR_HAND_LEFT)] ||
@@ -785,7 +763,9 @@ static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
 			continue;
 		}
 		if (g_xr_flight_buttons && now[b] && !g_in.button_prev[b]) {
-			Aeron_XrQueueButton((AeronXrButton)b, shifted);
+			/* No shifted layer: the left grip belongs to the game's quick
+			 * wheel (and grabbing panels). */
+			Aeron_XrQueueButton((AeronXrButton)b, 0);
 		}
 		g_in.button_prev[b] = now[b];
 	}
@@ -1108,16 +1088,11 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 				mapped.a = mapped.b = mapped.x = mapped.y = 0;
 				mapped.left_stick_click = mapped.right_stick_click = 0;
 			} else if (g_xr_flight_buttons) {
-				const int shifted = touch.active_left && touch.left_grip >= 0.5f;
 				mapped.a = mapped.b = mapped.x = mapped.y = 0;
 				mapped.left_trigger      = 0.0f;
 				mapped.left_grip         = 0.0f;
 				mapped.left_stick_click  = 0;
 				mapped.right_stick_click = 0;
-				if (shifted) {
-					mapped.right_grip = 0.0f;
-					memset(mapped.right_stick, 0, sizeof mapped.right_stick); /* flicks */
-				}
 			}
 			if (!g_xr_menu_keys) {
 				/* AERON_XR_INVERT_PITCH=1: thumbstick back = nose down (the

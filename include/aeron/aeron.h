@@ -105,20 +105,14 @@ typedef enum AeronXrButton {
 	AERON_XR_BUTTON_LEFT_STICK,  /* left thumbstick click */
 	AERON_XR_BUTTON_RIGHT_STICK, /* right thumbstick click */
 	AERON_XR_BUTTON_RIGHT_GRIP,
-	AERON_XR_BUTTON_FLICK_UP, /* right thumbstick flicks, only while shifted */
-	AERON_XR_BUTTON_FLICK_DOWN,
-	AERON_XR_BUTTON_FLICK_LEFT,
-	AERON_XR_BUTTON_FLICK_RIGHT,
 	AERON_XR_BUTTON_COUNT
 } AeronXrButton;
 
 /* Flight buttons: while enabled, presses of the buttons above are queued
  * for Aeron_XrPollButton instead of being reported on the virtual gamepad
- * (the right trigger, right stick, left stick and throttle lever stay on
- * the gamepad, and so does the right grip unless shifted). Holding the left
- * grip is the shift layer: presses made while it is held report
- * `shifted`, and the right thumbstick turns into four flick buttons instead
- * of steering. Disabled by default. */
+ * (the right trigger, right stick, left stick, throttle lever and right grip
+ * stay on the gamepad). The left grip is left to the game (Aeron_XrGetHand).
+ * `shifted` is always 0 (there is no shift layer). Disabled by default. */
 void Aeron_XrSetFlightButtons(int enabled);
 /* Pops the oldest queued flight-button press. Returns 0 when none is
  * queued. */
