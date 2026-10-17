@@ -159,7 +159,13 @@ static void Aeron_XrPickExtensions(void) {
 		XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_BD_ULTRA_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
+		/* Controller models the runtime draws for us (xr_render_model.c). */
+		XR_FB_RENDER_MODEL_EXTENSION_NAME,
+		XR_EXT_RENDER_MODEL_EXTENSION_NAME,
+		XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME,
 	};
+	const char* models_env = SDL_getenv("AERON_XR_RENDER_MODELS");
+	const int   want_models = !(models_env && models_env[0] == '0');
 	PFN_xrEnumerateInstanceExtensionProperties enumerate = NULL;
 	PFN_xrGetInstanceProcAddr                  gipa;
 	XrExtensionProperties*                     props;
@@ -198,9 +204,24 @@ static void Aeron_XrPickExtensions(void) {
 		props[i].type = XR_TYPE_EXTENSION_PROPERTIES;
 	}
 	if (XR_SUCCEEDED(enumerate(NULL, count, &count, props))) {
+		int offered_ext_render_model = 0;
+		for (uint32_t i = 0; i < count; ++i) {
+			offered_ext_render_model |= strcmp(props[i].extensionName, XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0;
+		}
 		for (w = 0; w < SDL_arraysize(wanted); ++w) {
+			const int model_ext = strcmp(wanted[w], XR_FB_RENDER_MODEL_EXTENSION_NAME) == 0 ||
+								  strcmp(wanted[w], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0 ||
+								  strcmp(wanted[w], XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME) == 0;
+			if (model_ext && !want_models) {
+				continue;
+			}
+			/* The interaction models need the render model extension too. */
+			if (strcmp(wanted[w], XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME) == 0 && !offered_ext_render_model) {
+				continue;
+			}
 			for (uint32_t i = 0; i < count; ++i) {
-				if (strcmp(props[i].extensionName, wanted[w]) == 0) {
+				if (strcmp(props[i].extensionName, wanted[w]) == 0 &&
+					g_xr.extension_count < SDL_arraysize(g_xr.extensions)) {
 					g_xr.extensions[g_xr.extension_count++] = wanted[w];
 					break;
 				}
@@ -219,6 +240,12 @@ static void Aeron_XrPickExtensions(void) {
 			g_xr.has_bd_ultra = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME) == 0) {
 			g_xr.has_htc_focus3 = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_FB_RENDER_MODEL_EXTENSION_NAME) == 0) {
+			g_xr.has_fb_render_model = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0) {
+			g_xr.has_ext_render_model = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME) == 0) {
+			g_xr.has_ext_interaction_render_model = 1;
 		}
 		Aeron_LogInfo("aeron.xr", "enabling %s", g_xr.extensions[i]);
 	}
@@ -573,6 +600,7 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 }
 
 void Aeron_XrShutdown(void) {
+	Aeron_XrRenderModelsShutdown();
 	Aeron_XrInputShutdown();
 	Aeron_XrStereoShutdown();
 	if (g_xr.device) {
@@ -666,6 +694,9 @@ int Aeron_XrPollEvents(void) {
 			g_xr.exit_requested  = 1;
 		} else if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
 			Aeron_XrInputLogProfiles();
+			Aeron_XrRenderModelsDirty();
+		} else if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_RENDER_MODELS_CHANGED_EXT) {
+			Aeron_XrRenderModelsDirty();
 		}
 		event.type = XR_TYPE_EVENT_DATA_BUFFER;
 		event.next = NULL;

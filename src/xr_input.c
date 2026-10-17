@@ -246,12 +246,14 @@ typedef struct AeronXrInput {
 	XrActionSet set;
 	XrPath      hand[AERON_XR_HAND_COUNT];
 	XrAction    stick, trigger, grip, aim, haptic;
+	XrAction    grip_pose; /* where the hand holds it (controller models) */
 	XrAction    a, b, x, y, stick_click, menu;
 	/* Capacitive touch (Touch controllers): index finger on the trigger,
 	 * thumb on any thumb surface. For the VR hands' poses. */
 	XrAction    trigger_touch, thumb_touch, thumbrest_touch;
 	int         touch_bound;
 	XrSpace     aim_space[AERON_XR_HAND_COUNT];
+	XrSpace     grip_space[AERON_XR_HAND_COUNT];
 
 	AeronXrTouchMapper mapper;
 	int                slot; /* controller slot used for the virtual gamepad */
@@ -276,6 +278,7 @@ typedef struct AeronXrInput {
 	int   hand_index_touch[AERON_XR_HAND_COUNT]; /* -1 unknown */
 	int   hand_thumb_touch[AERON_XR_HAND_COUNT];
 	int   hand_thumbrest_touch[AERON_XR_HAND_COUNT];
+	uint32_t hand_buttons[AERON_XR_HAND_COUNT]; /* AERON_XR_HAND_BUTTON_* (physical) */
 } AeronXrInput;
 
 static AeronXrInput g_in;
@@ -350,6 +353,7 @@ int Aeron_XrInputInit(void) {
 	g_in.stick_click =
 		Aeron_XrCreateAction("stick_click", "Thumbstick click", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
 	g_in.aim    = Aeron_XrCreateAction("aim", "Aim pose", XR_ACTION_TYPE_POSE_INPUT, 1);
+	g_in.grip_pose = Aeron_XrCreateAction("grip_pose", "Grip pose", XR_ACTION_TYPE_POSE_INPUT, 1);
 	g_in.haptic = Aeron_XrCreateAction("haptic", "Rumble", XR_ACTION_TYPE_VIBRATION_OUTPUT, 1);
 	g_in.a      = Aeron_XrCreateAction("button_a", "A", XR_ACTION_TYPE_BOOLEAN_INPUT, 0);
 	g_in.b      = Aeron_XrCreateAction("button_b", "B", XR_ACTION_TYPE_BOOLEAN_INPUT, 0);
@@ -361,7 +365,7 @@ int Aeron_XrInputInit(void) {
 	g_in.thumbrest_touch =
 		Aeron_XrCreateAction("thumbrest_touch", "Thumb on the thumb rest", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
 	if (!g_in.stick || !g_in.trigger || !g_in.grip || !g_in.stick_click || !g_in.aim || !g_in.haptic ||
-		!g_in.a || !g_in.b || !g_in.x || !g_in.y || !g_in.menu) {
+		!g_in.a || !g_in.b || !g_in.x || !g_in.y || !g_in.menu || !g_in.grip_pose) {
 		return 0;
 	}
 
@@ -380,6 +384,8 @@ int Aeron_XrInputInit(void) {
 			{ g_in.stick_click, Aeron_XrPath("/user/hand/right/input/thumbstick/click") },
 			{ g_in.aim, Aeron_XrPath("/user/hand/left/input/aim/pose") },
 			{ g_in.aim, Aeron_XrPath("/user/hand/right/input/aim/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/left/input/grip/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/right/input/grip/pose") },
 			{ g_in.haptic, Aeron_XrPath("/user/hand/left/output/haptic") },
 			{ g_in.haptic, Aeron_XrPath("/user/hand/right/output/haptic") },
 			{ g_in.a, Aeron_XrPath("/user/hand/right/input/a/click") },
@@ -400,6 +406,8 @@ int Aeron_XrInputInit(void) {
 			{ g_in.stick_click, Aeron_XrPath("/user/hand/right/input/thumbstick/click") },
 			{ g_in.aim, Aeron_XrPath("/user/hand/left/input/aim/pose") },
 			{ g_in.aim, Aeron_XrPath("/user/hand/right/input/aim/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/left/input/grip/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/right/input/grip/pose") },
 			{ g_in.haptic, Aeron_XrPath("/user/hand/left/output/haptic") },
 			{ g_in.haptic, Aeron_XrPath("/user/hand/right/output/haptic") },
 			{ g_in.a, Aeron_XrPath("/user/hand/right/input/a/click") },
@@ -523,6 +531,14 @@ int Aeron_XrInputInit(void) {
 		if (XR_FAILED(result)) {
 			Aeron_LogWarn("aeron.xr", "aim space creation failed: %s", Aeron_XrResultName(result));
 		}
+		if (g_in.grip_pose) {
+			space.action = g_in.grip_pose;
+			result       = g_xr.xrCreateActionSpace(g_xr.session, &space, &g_in.grip_space[h]);
+			if (XR_FAILED(result)) {
+				Aeron_LogWarn("aeron.xr", "grip space creation failed: %s", Aeron_XrResultName(result));
+				g_in.grip_space[h] = XR_NULL_HANDLE;
+			}
+		}
 	}
 
 	attach.countActionSets = 1;
@@ -567,6 +583,9 @@ void Aeron_XrInputShutdown(void) {
 	for (h = 0; h < AERON_XR_HAND_COUNT; ++h) {
 		if (g_in.aim_space[h] && g_xr.xrDestroySpace) {
 			g_xr.xrDestroySpace(g_in.aim_space[h]);
+		}
+		if (g_in.grip_space[h] && g_xr.xrDestroySpace) {
+			g_xr.xrDestroySpace(g_in.grip_space[h]);
 		}
 	}
 	if (g_in.set && g_xr.xrDestroyActionSet) {
@@ -937,6 +956,8 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	if (XR_FAILED(result) || result == XR_SESSION_NOT_FOCUSED) {
 		return;
 	}
+	/* Controller models: fetched once the bound profiles are known. */
+	Aeron_XrRenderModelsUpdate();
 
 	memset(&touch, 0, sizeof touch);
 	Aeron_XrStick(AERON_XR_HAND_LEFT, touch.left_stick, &touch.active_left);
@@ -957,6 +978,12 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	g_in.hand_trigger[AERON_XR_HAND_RIGHT] = touch.right_trigger;
 	g_in.hand_grip[AERON_XR_HAND_LEFT]     = touch.left_grip;
 	g_in.hand_grip[AERON_XR_HAND_RIGHT]    = touch.right_grip;
+	g_in.hand_buttons[AERON_XR_HAND_LEFT] =
+		(touch.x ? AERON_XR_HAND_BUTTON_LOWER : 0u) | (touch.y ? AERON_XR_HAND_BUTTON_UPPER : 0u) |
+		(touch.left_stick_click ? AERON_XR_HAND_BUTTON_STICK : 0u) | (touch.menu ? AERON_XR_HAND_BUTTON_MENU : 0u);
+	g_in.hand_buttons[AERON_XR_HAND_RIGHT] = (touch.a ? AERON_XR_HAND_BUTTON_LOWER : 0u) |
+											 (touch.b ? AERON_XR_HAND_BUTTON_UPPER : 0u) |
+											 (touch.right_stick_click ? AERON_XR_HAND_BUTTON_STICK : 0u);
 	for (int h = 0; h < AERON_XR_HAND_COUNT; ++h) {
 		g_in.hand_index_touch[h] = -1;
 		g_in.hand_thumb_touch[h] = -1;
@@ -1197,7 +1224,38 @@ int Aeron_XrGetHand(int hand, AeronXrHand* out) {
 	out->grip           = g_in.hand_grip[hand];
 	out->index_touch    = g_in.hand_index_touch[hand];
 	out->thumb_touch    = g_in.hand_thumb_touch[hand];
+	out->buttons        = g_in.hand_buttons[hand] |
+				   (g_in.hand_thumbrest_touch[hand] == 1 ? AERON_XR_HAND_BUTTON_THUMBREST : 0u);
+	{
+		XrPosef grip;
+		if (Aeron_XrInputGripPose(hand, &grip)) {
+			out->grip_valid          = 1;
+			out->grip_position[0]    = grip.position.x;
+			out->grip_position[1]    = grip.position.y;
+			out->grip_position[2]    = grip.position.z;
+			out->grip_orientation[0] = grip.orientation.x;
+			out->grip_orientation[1] = grip.orientation.y;
+			out->grip_orientation[2] = grip.orientation.z;
+			out->grip_orientation[3] = grip.orientation.w;
+		}
+	}
 	out->valid          = 1;
+	return 1;
+}
+
+int Aeron_XrInputGripPose(int hand, XrPosef* out) {
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION, NULL };
+	if (!out || hand < 0 || hand >= AERON_XR_HAND_COUNT || !g_in.ready || !g_in.grip_space[hand] ||
+		!g_xr.predicted_display_time || !Aeron_XrSessionRunning()) {
+		return 0;
+	}
+	if (XR_FAILED(g_xr.xrLocateSpace(g_in.grip_space[hand], g_xr.local_space, g_xr.predicted_display_time,
+									 &location)) ||
+		!(location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) ||
+		!(location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+		return 0;
+	}
+	*out = location.pose;
 	return 1;
 }
 

@@ -109,7 +109,10 @@ enum {
 	AERON_XR_PANEL_CARD = 1,
 	AERON_XR_PANEL_CARD2 = 2,
 	AERON_XR_PANEL_FRAME = 3,
-	AERON_XR_PANEL_COUNT = 4
+	/* Labels beside the controllers: two panels (one per controller, the
+	 * left and right half of the image), shown on top of the other panels. */
+	AERON_XR_PANEL_LABELS = 4,
+	AERON_XR_PANEL_COUNT = 5
 };
 #define AERON_XR_FRAME_WIDTH 1280
 #define AERON_XR_FRAME_HEIGHT 1104

@@ -99,8 +99,9 @@ enum {
 	AERON_XR_SLOT_BEAM    = 7,
 	AERON_XR_SLOT_CARD2   = 8,
 	AERON_XR_SLOT_FRAME   = 9,
-	AERON_XR_STEREO_SLOTS = 10 /* 2 eyes + head HUD + world HUD + console + second head HUD + card + beams + card 2
-								  + screen frame */
+	AERON_XR_SLOT_LABELS  = 10,
+	AERON_XR_STEREO_SLOTS = 11 /* 2 eyes + head HUD + world HUD + console + second head HUD + card + beams + card 2
+								  + screen frame + controller labels */
 };
 
 /* The console layer (a touch panel near the player's lap) has its own
@@ -265,9 +266,11 @@ int Aeron_XrStereoInit(void) {
 															   "aeron.xr.hud",      "aeron.xr.hud_world",
 															   "aeron.xr.console",  "aeron.xr.hud_aux",
 															   "aeron.xr.card",     "aeron.xr.beam",
-															   "aeron.xr.card2",    "aeron.xr.frame" };
+															   "aeron.xr.card2",    "aeron.xr.frame",
+															   "aeron.xr.labels" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
-		const int             card     = i == AERON_XR_SLOT_CARD || i == AERON_XR_SLOT_CARD2;
+		/* The controller labels' layer has the cards' size (two halves). */
+		const int             card     = i == AERON_XR_SLOT_CARD || i == AERON_XR_SLOT_CARD2 || i == AERON_XR_SLOT_LABELS;
 		const int             frame    = i == AERON_XR_SLOT_FRAME;
 		const int             optional = i == AERON_XR_SLOT_CONSOLE || i == AERON_XR_SLOT_HUD_AUX || card ||
 							 i == AERON_XR_SLOT_BEAM || frame;
@@ -584,6 +587,7 @@ static int Aeron_XrStereoPanelSlot(int which) {
 		   : which == AERON_XR_PANEL_CARD  ? AERON_XR_SLOT_CARD
 		   : which == AERON_XR_PANEL_CARD2 ? AERON_XR_SLOT_CARD2
 		   : which == AERON_XR_PANEL_FRAME ? AERON_XR_SLOT_FRAME
+		   : which == AERON_XR_PANEL_LABELS ? AERON_XR_SLOT_LABELS
 										   : -1;
 }
 
@@ -972,11 +976,11 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 			layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
 		}
 	}
-	/* The cards, then the console last: it is the panel the hands reach
-	 * into. */
+	/* The cards, then the console: it is the panel the hands reach into;
+	 * the controller labels over all of them. */
 	{
 		static const int order[AERON_XR_PANEL_COUNT] = { AERON_XR_PANEL_FRAME, AERON_XR_PANEL_CARD, AERON_XR_PANEL_CARD2,
-														 AERON_XR_PANEL_CONSOLE };
+														 AERON_XR_PANEL_CONSOLE, AERON_XR_PANEL_LABELS };
 		for (int o = 0; o < AERON_XR_PANEL_COUNT; ++o) {
 			const int which = order[o];
 			const int slot  = Aeron_XrStereoPanelSlot(which);

@@ -136,10 +136,57 @@ typedef struct AeronXrHand {
 	 * on a button, the stick or the thumb rest. */
 	int index_touch;
 	int thumb_touch;
+	/* The grip pose (where the palm holds the controller; the runtime's own
+	 * controller model is drawn there on Quest), LOCAL space. */
+	int   grip_valid;
+	float grip_position[3];
+	float grip_orientation[4];
+	/* This controller's own buttons held now (AERON_XR_HAND_BUTTON_*): the
+	 * physical ones, not swapped for left-handed play. */
+	uint32_t buttons;
 } AeronXrHand;
+#define AERON_XR_HAND_BUTTON_LOWER 1u     /* A (right) / X (left) */
+#define AERON_XR_HAND_BUTTON_UPPER 2u     /* B / Y */
+#define AERON_XR_HAND_BUTTON_STICK 4u     /* thumbstick click */
+#define AERON_XR_HAND_BUTTON_MENU 8u      /* the left menu button */
+#define AERON_XR_HAND_BUTTON_THUMBREST 16u /* thumb on the thumb rest */
 /* Fills `out` for hand 0 (left) or 1 (right) at this frame's predicted
  * display time. Returns out->valid. */
 int Aeron_XrGetHand(int hand, AeronXrHand* out);
+/* The runtime's own model of a controller, where it offers one:
+ * XR_FB_render_model (Meta Quest: a glTF drawn at the grip pose) or
+ * XR_EXT_interaction_render_model (SteamVR, Pico 4 Ultra: a glTF with its
+ * own pose and moving parts - buttons, trigger, stick). Fetched once the
+ * session runs (AERON_XR_RENDER_MODELS=0 turns this off); `generation`
+ * changes when a hand's model is replaced. The glb stays valid until then. */
+typedef enum AeronXrRenderModelKind {
+	AERON_XR_RENDER_MODEL_NONE  = 0,
+	AERON_XR_RENDER_MODEL_GRIP  = 1, /* model space = the grip pose */
+	AERON_XR_RENDER_MODEL_SPACE = 2  /* model space and animatable nodes from the runtime */
+} AeronXrRenderModelKind;
+typedef struct AeronXrRenderModel {
+	AeronXrRenderModelKind kind;
+	uint32_t               generation;
+	const uint8_t*         glb;
+	size_t                 glb_size;
+	char                   name[64];
+	/* SPACE models: the glTF node names whose poses Aeron_XrLocateRenderModel
+	 * reports, in that order. */
+	uint32_t    node_count;
+	const char (*node_names)[64];
+} AeronXrRenderModel;
+typedef struct AeronXrRenderModelNode {
+	float position[3];    /* relative to the node's parent */
+	float orientation[4]; /* x, y, z, w */
+	int   visible;
+} AeronXrRenderModelNode;
+/* Hand 0 (left) / 1 (right). Returns 0 when it has no runtime model. */
+int Aeron_XrGetRenderModel(int hand, AeronXrRenderModel* out);
+/* This frame's pose of the hand's model in LOCAL space (the grip pose for
+ * GRIP models) and, for SPACE models, its animatable nodes' poses (up to
+ * `node_capacity`). Returns 0 when not tracked. */
+int Aeron_XrLocateRenderModel(int hand, float position[3], float orientation[4], AeronXrRenderModelNode* nodes,
+							  uint32_t node_capacity);
 /* While captured, the hand's trigger is not reported to the game (no
  * gamepad button, no flight-button press): a game UI owns it. A pull that
  * started while captured stays hidden until it is released. */

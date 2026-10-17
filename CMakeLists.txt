@@ -377,6 +377,7 @@ set(AERON_SOURCES
     src/xr.c
     src/xr_input.c
     src/xr_input_map.c
+    src/xr_render_model.c
     src/xr_stereo.c
 )
 
