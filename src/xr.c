@@ -204,6 +204,27 @@ static void Aeron_XrPickExtensions(void) {
 		props[i].type = XR_TYPE_EXTENSION_PROPERTIES;
 	}
 	if (XR_SUCCEEDED(enumerate(NULL, count, &count, props))) {
+		/* Everything the runtime offers, for the log (a few per line). */
+		{
+			char     line[900];
+			size_t   len = 0;
+			uint32_t first = 0;
+			line[0]        = 0;
+			for (uint32_t i = 0; i <= count; ++i) {
+				const size_t n = i < count ? strlen(props[i].extensionName) : 0;
+				if (i == count || (len && len + n + 1 >= sizeof line)) {
+					Aeron_LogInfo("aeron.xr", "runtime offers (%u-%u of %u): %s", first + 1, i, count, line);
+					len     = 0;
+					line[0] = 0;
+					first   = i;
+					if (i == count) {
+						break;
+					}
+				}
+				len += (size_t)SDL_snprintf(line + len, sizeof line - len, "%s%s", len ? " " : "",
+											props[i].extensionName);
+			}
+		}
 		int offered_ext_render_model = 0;
 		for (uint32_t i = 0; i < count; ++i) {
 			offered_ext_render_model |= strcmp(props[i].extensionName, XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0;
