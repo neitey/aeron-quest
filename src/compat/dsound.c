@@ -114,11 +114,25 @@ static float DSoundCompat_BalanceFromMillibels(int millibels) {
 	return 0.0f;
 }
 
+/* DSoundCompat_SetTimeEffect: the effect buffers' rate scale and the other
+ * buffers' gain; the devices to apply them to at once. */
+static float     s_ds_effect_pitch = 1.0f;
+static float     s_ds_other_gain   = 1.0f;
+static DSDevice* s_ds_devices[4];
+
+static int DSoundCompat_IsEffect(const DSBuffer* buffer) { return (buffer->flags & DSBCAPS_CTRLFREQUENCY) != 0; }
+
 static float DSoundCompat_Pitch(const DSBuffer* buffer) {
-	if (buffer->frequency == 0 || buffer->rate <= 0) {
-		return 1.0f;
+	float pitch = 1.0f;
+	if (buffer->frequency != 0 && buffer->rate > 0) {
+		pitch = (float)buffer->frequency / (float)buffer->rate;
 	}
-	return (float)buffer->frequency / (float)buffer->rate;
+	return DSoundCompat_IsEffect(buffer) ? pitch * s_ds_effect_pitch : pitch;
+}
+
+static float DSoundCompat_Gain(const DSBuffer* buffer) {
+	const float gain = DSoundCompat_GainFromMillibels(buffer->volume_mb);
+	return DSoundCompat_IsEffect(buffer) || buffer->is_primary ? gain : gain * s_ds_other_gain;
 }
 
 /* --- DirectSound3D sub-interfaces ----------------------------------------- */
@@ -640,7 +654,7 @@ static int AERON_DXAPI DSoundBuffer_Play(void* self, uint32_t reserved1, uint32_
 		b->voice  = 0;
 		b->cursor = 0;
 	}
-	float  gain  = DSoundCompat_GainFromMillibels(b->volume_mb);
+	float  gain  = DSoundCompat_Gain(b);
 	float  pitch = DSoundCompat_Pitch(b);
 	size_t frame = b->cursor / (uint32_t)(b->channels * (b->bits / 8));
 	if (b->is3d) {
@@ -685,7 +699,7 @@ static int AERON_DXAPI DSoundBuffer_SetVolume(void* self, int32_t volume) {
 	DSoundBuffer_LockState(b);
 	b->volume_mb = volume;
 	if (b->voice) {
-		Aeron_AudioVoiceSetGain(b->voice, DSoundCompat_GainFromMillibels(volume));
+		Aeron_AudioVoiceSetGain(b->voice, DSoundCompat_Gain(b));
 	}
 	DSoundBuffer_UnlockState(b);
 	return DS_OK;
@@ -794,6 +808,11 @@ static int AERON_DXAPI DSoundDevice_Release(void* self) {
 	/* Native DirectSound invalidates every child buffer with its device. */
 	while (d->buffers) {
 		DSoundBuffer_Destroy(d->buffers);
+	}
+	for (int i = 0; i < (int)(sizeof s_ds_devices / sizeof s_ds_devices[0]); ++i) {
+		if (s_ds_devices[i] == d) {
+			s_ds_devices[i] = NULL;
+		}
 	}
 	free(d);
 	return 0;
@@ -959,5 +978,41 @@ int AERON_DXAPI DirectSoundCreate(const DSCompatGuid* device_guid, void** outDev
 	device->lpVtbl   = &g_ds_device_vtbl;
 	device->refcount = 1;
 	*outDevice       = device;
+	for (int i = 0; i < (int)(sizeof s_ds_devices / sizeof s_ds_devices[0]); ++i) {
+		if (!s_ds_devices[i]) {
+			s_ds_devices[i] = device;
+			break;
+		}
+	}
 	return DS_OK;
+}
+
+void DSoundCompat_SetTimeEffect(float effect_pitch, float other_gain) {
+	if (!(effect_pitch > 0.05f)) {
+		effect_pitch = 0.05f;
+	}
+	if (!(other_gain >= 0.0f)) {
+		other_gain = 0.0f;
+	}
+	if (effect_pitch == s_ds_effect_pitch && other_gain == s_ds_other_gain) {
+		return;
+	}
+	s_ds_effect_pitch = effect_pitch;
+	s_ds_other_gain   = other_gain;
+	for (int i = 0; i < (int)(sizeof s_ds_devices / sizeof s_ds_devices[0]); ++i) {
+		for (DSBuffer* b = s_ds_devices[i] ? s_ds_devices[i]->buffers : NULL; b; b = b->next) {
+			if (b->is_primary) {
+				continue;
+			}
+			DSoundBuffer_LockState(b);
+			if (b->voice) {
+				if (DSoundCompat_IsEffect(b)) {
+					Aeron_AudioVoiceSetPitch(b->voice, DSoundCompat_Pitch(b));
+				} else {
+					Aeron_AudioVoiceSetGain(b->voice, DSoundCompat_Gain(b));
+				}
+			}
+			DSoundBuffer_UnlockState(b);
+		}
+	}
 }

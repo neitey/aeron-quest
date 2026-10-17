@@ -186,6 +186,12 @@ struct IDirectSoundBuffer {
  * *outDevice. */
 int AERON_DXAPI DirectSoundCreate(const DSCompatGuid* device_guid, void** outDevice, void* outerUnknown);
 
+/* Slow motion (game side): `effect_pitch` scales the playback rate of the
+ * buffers made with DSBCAPS_CTRLFREQUENCY (the sound effects) and
+ * `other_gain` the volume of the others (e.g. a music stream). Playing
+ * buffers follow at once. 1, 1 = as normal. */
+void DSoundCompat_SetTimeEffect(float effect_pitch, float other_gain);
+
 #ifdef __cplusplus
 }
 #endif
