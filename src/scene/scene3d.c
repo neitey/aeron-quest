@@ -959,6 +959,14 @@ void AeronScene_SetPassHook(AeronScene3D* s, AeronScenePassSlot slot, AeronScene
 	s->hook_user[slot] = user;
 }
 
+void AeronScene_SetDirectOutputHook(AeronScene3D* s, AeronScenePassHookFn fn, void* user) {
+	if (!s) {
+		return;
+	}
+	s->direct_hook_fn   = fn;
+	s->direct_hook_user = user;
+}
+
 void AeronScene_SetAfterMeshes(AeronScene3D* s, AeronSceneAfterMeshesFn fn, void* user) {
 	if (!s) {
 		return;
@@ -1679,6 +1687,8 @@ void AeronScene_SetDirectOutput(AeronScene3D* s, AeronRenderTarget* target, Aero
 
 int AeronScene_DirectOutputUsed(const AeronScene3D* s) { return s && s->direct_used; }
 
+int AeronScene_DirectOutputActive(const AeronScene3D* s) { return s && s->direct_active; }
+
 static int scene_render_impl(AeronScene3D* s, AeronCommandBuffer* cmd);
 
 int AeronScene_Render(AeronScene3D* s, AeronCommandBuffer* cmd) {
@@ -2029,6 +2039,10 @@ static int scene_render_impl(AeronScene3D* s, AeronCommandBuffer* cmd) {
 	 * blur may already have reopened the final render-resolution pass. */
 	if (pass) {
 		run_hook(s, AERON_SCENE_HOOK_AFTER_TRANSPARENT, cmd, pass);
+		if (s->direct_active && s->direct_hook_fn) {
+			Aeron_GpuDebugMarker(cmd, "Game hook: direct output");
+			s->direct_hook_fn(cmd, pass, s->render_w, s->render_h, s->direct_hook_user);
+		}
 		Aeron_EndRenderPass(pass);
 	}
 

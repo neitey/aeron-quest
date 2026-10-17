@@ -232,6 +232,9 @@ struct AeronScene3D {
 
 	AeronScenePassHookFn    hook_fn[AERON_SCENE_HOOK_COUNT];
 	void*                   hook_user[AERON_SCENE_HOOK_COUNT];
+	/* Last in a direct-output forward pass (AeronScene_SetDirectOutputHook). */
+	AeronScenePassHookFn    direct_hook_fn;
+	void*                   direct_hook_user;
 	AeronSceneAfterMeshesFn after_meshes_fn;
 	void*                   after_meshes_user;
 

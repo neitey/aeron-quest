@@ -476,6 +476,14 @@ int AeronScene_Render(AeronScene3D* scene, AeronCommandBuffer* cmd);
 void AeronScene_SetDirectOutput(AeronScene3D* scene, AeronRenderTarget* target, AeronTextureFormat format,
 								const float tint[3]);
 int  AeronScene_DirectOutputUsed(const AeronScene3D* scene);
+/* Inside a Render (for its in-pass hooks): the pass writes the direct
+ * output target. */
+int  AeronScene_DirectOutputActive(const AeronScene3D* scene);
+/* Draws at the very end of a direct-output forward pass (display-space
+ * colour in the direct target's format; e.g. alpha for a compositor
+ * layer). Unlike the pass hooks it does not rule direct output out, and
+ * it is not run when a Render goes through the HDR target. NULL clears. */
+void AeronScene_SetDirectOutputHook(AeronScene3D* scene, AeronScenePassHookFn fn, void* user);
 
 /* Borrowed views for layer submission / game-side hook passes. */
 AeronTexture*      AeronScene_ColorTexture(AeronScene3D* scene);

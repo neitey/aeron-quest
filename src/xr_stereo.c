@@ -64,6 +64,8 @@ void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count) {
 
 void Aeron_XrStereoCommitEyeOverlay(void) {}
 
+void Aeron_XrStereoCommitEyeOverlayRect(const int rect[2][4]) { (void)rect; }
+
 int Aeron_XrStereoScreenOverlay(void) { return 0; }
 
 int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* c) {
@@ -160,6 +162,8 @@ typedef struct AeronXrStereo {
 	XrCompositionLayerProjectionView proj_views[AERON_XR_EYE_COUNT];
 	XrCompositionLayerProjection     projection;
 	XrCompositionLayerProjection     projection_overlay;
+	XrCompositionLayerProjectionView overlay_views[AERON_XR_EYE_COUNT];
+	int                              overlay_rect[AERON_XR_EYE_COUNT][4]; /* w 0: the whole image */
 	XrCompositionLayerQuad           hud_quad;
 	XrCompositionLayerQuad           hud_world_quad;
 	/* Cockpit panels: parts of the HUD target as separate quads. */
@@ -655,7 +659,33 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) {
 	Aeron_XrStereoCommitPanelLayer(AERON_XR_PANEL_CONSOLE, console, console ? 1 : 0);
 }
 
-void Aeron_XrStereoCommitEyeOverlay(void) { g_st.eye_overlay = g_st.committed; }
+void Aeron_XrStereoCommitEyeOverlay(void) {
+	g_st.eye_overlay = g_st.committed;
+	memset(g_st.overlay_rect, 0, sizeof g_st.overlay_rect);
+}
+
+void Aeron_XrStereoCommitEyeOverlayRect(const int rect[2][4]) {
+	Aeron_XrStereoCommitEyeOverlay();
+	if (!rect) {
+		return;
+	}
+	for (int eye = 0; eye < AERON_XR_EYE_COUNT; ++eye) {
+		int x0 = rect[eye][0], y0 = rect[eye][1];
+		int x1 = x0 + rect[eye][2], y1 = y0 + rect[eye][3];
+		x0 = x0 < 0 ? 0 : x0;
+		y0 = y0 < 0 ? 0 : y0;
+		x1 = x1 > (int)g_st.width ? (int)g_st.width : x1;
+		y1 = y1 > (int)g_st.height ? (int)g_st.height : y1;
+		if (x1 - x0 < 2 || y1 - y0 < 2) {
+			x0 = y0 = 0; /* nothing there: a corner the game left clear */
+			x1 = y1 = 2;
+		}
+		g_st.overlay_rect[eye][0] = x0;
+		g_st.overlay_rect[eye][1] = y0;
+		g_st.overlay_rect[eye][2] = x1 - x0;
+		g_st.overlay_rect[eye][3] = y1 - y0;
+	}
+}
 
 void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count) {
 	g_st.beam_count = 0;
@@ -1017,6 +1047,29 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 				g_st.projection_overlay            = g_st.projection;
 				g_st.projection_overlay.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
 													 XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+				if (g_st.overlay_rect[0][2] > 0 && g_st.width > 0 && g_st.height > 0) {
+					/* Only the part of each eye given: that rect of the image
+					 * over the matching part of the eye's field of view (the
+					 * projection is linear in the tangents). */
+					for (int eye = 0; eye < AERON_XR_EYE_COUNT; ++eye) {
+						XrCompositionLayerProjectionView* v = &g_st.overlay_views[eye];
+						const int* r = g_st.overlay_rect[eye];
+						const XrFovf f = g_st.proj_views[eye].fov;
+						const float tl = tanf(f.angleLeft), tr = tanf(f.angleRight);
+						const float tu = tanf(f.angleUp), td = tanf(f.angleDown);
+						const float w = (float)g_st.width, h = (float)g_st.height;
+						*v = g_st.proj_views[eye];
+						v->subImage.imageRect.offset.x      = r[0];
+						v->subImage.imageRect.offset.y      = r[1];
+						v->subImage.imageRect.extent.width  = r[2];
+						v->subImage.imageRect.extent.height = r[3];
+						v->fov.angleLeft  = atanf(tl + (tr - tl) * (float)r[0] / w);
+						v->fov.angleRight = atanf(tl + (tr - tl) * (float)(r[0] + r[2]) / w);
+						v->fov.angleUp    = atanf(tu - (tu - td) * (float)r[1] / h);
+						v->fov.angleDown  = atanf(tu - (tu - td) * (float)(r[1] + r[3]) / h);
+					}
+					g_st.projection_overlay.views = g_st.overlay_views;
+				}
 				layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.projection_overlay;
 			}
 		}

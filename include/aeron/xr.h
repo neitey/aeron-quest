@@ -165,6 +165,10 @@ void Aeron_XrStereoCommitPanelLayer(int which, const AeronXrPanel* quads, int co
  * (unpremultiplied). The game sets alpha to 1 where something must appear
  * in front of the screen and its frame (the hands) and 0 elsewhere. */
 void Aeron_XrStereoCommitEyeOverlay(void);
+/* The same, showing only rect[eye] = { x, y, w, h } (eye image pixels) of
+ * each eye: the compositor blends just that part (the hands' box), with
+ * the matching part of the field of view. */
+void Aeron_XrStereoCommitEyeOverlayRect(const int rect[2][4]);
 /* Up to two pointer beams (rects in beam_target pixels), drawn last. */
 void Aeron_XrStereoCommitBeams(const AeronXrPanel* beams, int count);
 /* The eye targets are a 3D environment around the flat virtual screen:
