@@ -154,6 +154,11 @@ static void Aeron_XrPickExtensions(void) {
 	static const char* const wanted[] = {
 		XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME,
 		XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME,
+		/* Controller profiles: without them the runtimes of these headsets
+		 * reject the bindings for their own controllers. */
+		XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME,
+		XR_BD_ULTRA_CONTROLLER_INTERACTION_EXTENSION_NAME,
+		XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
 	};
 	PFN_xrEnumerateInstanceExtensionProperties enumerate = NULL;
 	PFN_xrGetInstanceProcAddr                  gipa;
@@ -208,6 +213,12 @@ static void Aeron_XrPickExtensions(void) {
 			g_xr.has_perf_settings = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0) {
 			g_xr.has_refresh_rate = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME) == 0) {
+			g_xr.has_bd_controller = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_BD_ULTRA_CONTROLLER_INTERACTION_EXTENSION_NAME) == 0) {
+			g_xr.has_bd_ultra = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME) == 0) {
+			g_xr.has_htc_focus3 = 1;
 		}
 		Aeron_LogInfo("aeron.xr", "enabling %s", g_xr.extensions[i]);
 	}
@@ -363,6 +374,8 @@ static int Aeron_XrLoadFunctions(void) {
 		AERON_XR_LOAD_OPTIONAL(xrEnumerateDisplayRefreshRatesFB);
 		AERON_XR_LOAD_OPTIONAL(xrRequestDisplayRefreshRateFB);
 	}
+	AERON_XR_LOAD_OPTIONAL(xrGetCurrentInteractionProfile);
+	AERON_XR_LOAD_OPTIONAL(xrPathToString);
 #undef AERON_XR_LOAD_OPTIONAL
 	return 1;
 }
@@ -651,6 +664,8 @@ int Aeron_XrPollEvents(void) {
 		} else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
 			g_xr.session_running = 0;
 			g_xr.exit_requested  = 1;
+		} else if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
+			Aeron_XrInputLogProfiles();
 		}
 		event.type = XR_TYPE_EVENT_DATA_BUFFER;
 		event.next = NULL;

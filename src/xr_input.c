@@ -439,6 +439,68 @@ int Aeron_XrInputInit(void) {
 		}
 		Aeron_XrSuggest("/interaction_profiles/valve/index_controller", index,
 						(uint32_t)SDL_arraysize(index));
+		{
+			/* Pico 4 / Neo 3 / 4 Ultra and HTC Focus 3 controllers: Touch's
+			 * layout (A/B right, X/Y left, menu left), with touch sensors on
+			 * trigger, stick and face buttons but no thumb rest (HTC has one).
+			 * Their runtimes don't take Touch bindings for them, so each needs
+			 * its own suggestion. */
+			static const char* const other_thumb_paths[] = {
+				"/user/hand/left/input/thumbstick/touch", "/user/hand/right/input/thumbstick/touch",
+				"/user/hand/left/input/x/touch",          "/user/hand/left/input/y/touch",
+				"/user/hand/right/input/a/touch",         "/user/hand/right/input/b/touch",
+			};
+			XrActionSuggestedBinding other[SDL_arraysize(touch) + 12];
+			uint32_t                 base_count = 0;
+			for (uint32_t k = 0; k < (uint32_t)SDL_arraysize(touch); ++k) {
+				other[base_count++] = touch[k];
+			}
+			struct {
+				int         offered;
+				const char* profile;
+				int         face_touch; /* x/y/a/b touch sensors */
+				int         thumbrest;
+			} const others[] = {
+				{ g_xr.has_bd_controller, "/interaction_profiles/bytedance/pico4_controller", 1, 0 },
+				{ g_xr.has_bd_controller, "/interaction_profiles/bytedance/pico_neo3_controller", 1, 0 },
+				{ g_xr.has_bd_ultra, "/interaction_profiles/bytedance/pico_ultra_controller_bd", 1, 0 },
+				{ g_xr.has_htc_focus3, "/interaction_profiles/htc/vive_focus3_controller", 0, 1 },
+			};
+			for (size_t o = 0; o < SDL_arraysize(others); ++o) {
+				uint32_t count = base_count;
+				if (!others[o].offered) {
+					continue;
+				}
+				if (g_in.trigger_touch && g_in.thumb_touch) {
+					other[count++] = (XrActionSuggestedBinding) {
+						g_in.trigger_touch, Aeron_XrPath("/user/hand/left/input/trigger/touch") };
+					other[count++] = (XrActionSuggestedBinding) {
+						g_in.trigger_touch, Aeron_XrPath("/user/hand/right/input/trigger/touch") };
+					for (uint32_t k = 0; k < (uint32_t)SDL_arraysize(other_thumb_paths); ++k) {
+						if (k >= 2 && !others[o].face_touch) {
+							break;
+						}
+						other[count++] =
+							(XrActionSuggestedBinding) { g_in.thumb_touch, Aeron_XrPath(other_thumb_paths[k]) };
+					}
+					if (others[o].thumbrest && g_in.thumbrest_touch) {
+						other[count++] = (XrActionSuggestedBinding) {
+							g_in.thumbrest_touch, Aeron_XrPath("/user/hand/left/input/thumbrest/touch") };
+						other[count++] = (XrActionSuggestedBinding) {
+							g_in.thumbrest_touch, Aeron_XrPath("/user/hand/right/input/thumbrest/touch") };
+					}
+				}
+				if (Aeron_XrSuggest(others[o].profile, other, count)) {
+					g_in.touch_bound = g_in.touch_bound || count > base_count;
+				} else if (count > base_count && Aeron_XrSuggest(others[o].profile, other, base_count)) {
+					/* fine without the touch sensors */
+				} else {
+					continue;
+				}
+				touch_ok = 1;
+				Aeron_LogInfo("aeron.xr", "bindings suggested for %s", others[o].profile);
+			}
+		}
 		if (!touch_ok) {
 			return 0;
 		}
@@ -463,8 +525,33 @@ int Aeron_XrInputInit(void) {
 		return 0;
 	}
 	g_in.ready = 1;
-	Aeron_LogInfo("aeron.xr", "controller input ready (Touch profile; virtual gamepad + menu pointer)");
+	Aeron_LogInfo("aeron.xr", "controller input ready (virtual gamepad + menu pointer)");
 	return 1;
+}
+
+void Aeron_XrInputLogProfiles(void) {
+	static const char* const hand_name[AERON_XR_HAND_COUNT] = { "left", "right" };
+	if (!g_in.ready || !g_xr.xrGetCurrentInteractionProfile || !g_xr.xrPathToString) {
+		return;
+	}
+	for (int h = 0; h < AERON_XR_HAND_COUNT; ++h) {
+		XrInteractionProfileState state = { XR_TYPE_INTERACTION_PROFILE_STATE, NULL };
+		char                      name[XR_MAX_PATH_LENGTH];
+		uint32_t                  length = 0;
+		XrResult                  result = g_xr.xrGetCurrentInteractionProfile(g_xr.session, g_in.hand[h], &state);
+		if (XR_FAILED(result)) {
+			Aeron_LogWarn("aeron.xr", "%s controller profile unknown: %s", hand_name[h], Aeron_XrResultName(result));
+			continue;
+		}
+		if (state.interactionProfile == XR_NULL_PATH) {
+			Aeron_LogInfo("aeron.xr", "%s controller: none (off, or no binding matches it)", hand_name[h]);
+			continue;
+		}
+		if (XR_FAILED(g_xr.xrPathToString(g_xr.instance, state.interactionProfile, sizeof name, &length, name))) {
+			SDL_strlcpy(name, "?", sizeof name);
+		}
+		Aeron_LogInfo("aeron.xr", "%s controller: %s", hand_name[h], name);
+	}
 }
 
 void Aeron_XrInputShutdown(void) {

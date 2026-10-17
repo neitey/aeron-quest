@@ -125,13 +125,20 @@ typedef struct AeronXr {
 	PFN_xrLocateViews                     xrLocateViews;
 
 	/* Optional extensions, enabled only when the runtime offers them. */
-	const char* extensions[4];
+	const char* extensions[8];
 	uint32_t    extension_count;
 	int         has_perf_settings;   /* XR_EXT_performance_settings */
 	int         has_refresh_rate;    /* XR_FB_display_refresh_rate */
+	/* Controller profiles beyond Touch / Index (Pico, HTC). */
+	int         has_bd_controller;   /* XR_BD_controller_interaction: Pico Neo 3, Pico 4 */
+	int         has_bd_ultra;        /* XR_BD_ultra_controller_interaction: Pico 4 Ultra */
+	int         has_htc_focus3;      /* XR_HTC_vive_focus3_controller_interaction */
 	PFN_xrPerfSettingsSetPerformanceLevelEXT xrPerfSettingsSetPerformanceLevelEXT;
 	PFN_xrEnumerateDisplayRefreshRatesFB     xrEnumerateDisplayRefreshRatesFB;
 	PFN_xrRequestDisplayRefreshRateFB        xrRequestDisplayRefreshRateFB;
+	/* Core, only used for the log (may be missing). */
+	PFN_xrGetCurrentInteractionProfile xrGetCurrentInteractionProfile;
+	PFN_xrPathToString                 xrPathToString;
 } AeronXr;
 
 extern AeronXr g_xr;
@@ -151,5 +158,8 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 /* xr_input.c */
 int  Aeron_XrInputInit(void);
 void Aeron_XrInputShutdown(void);
+/* Logs the controller profile the runtime picked for each hand (after an
+ * interaction profile change event). */
+void Aeron_XrInputLogProfiles(void);
 
 #endif

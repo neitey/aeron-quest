@@ -214,6 +214,19 @@ int Aeron_XrStereoInit(void) {
 			scale = (float)SDL_atof(s);
 		}
 	}
+	{
+		/* AERON_XR_EYE_PIXELS: a pixel budget per eye. The recommended size
+		 * differs a lot between headsets (and the scale above is relative to
+		 * it), the GPU power not as much. */
+		const char*  px  = SDL_getenv("AERON_XR_EYE_PIXELS");
+		const double rec = (double)configs[0].recommendedImageRectWidth * configs[0].recommendedImageRectHeight;
+		if (px && px[0] && SDL_atof(px) > 100000.0 && rec > 0.0 && rec * scale * scale > SDL_atof(px)) {
+			const float capped = (float)SDL_sqrt(SDL_atof(px) / rec);
+			Aeron_LogInfo("aeron.xr", "eye resolution scale %.2f -> %.2f (budget %.0f pixels per eye)", (double)scale,
+						  (double)capped, SDL_atof(px));
+			scale = capped;
+		}
+	}
 	g_st.width  = (int)((float)configs[0].recommendedImageRectWidth * scale + 0.5f);
 	g_st.height = (int)((float)configs[0].recommendedImageRectHeight * scale + 0.5f);
 	if (g_st.width > (int)configs[0].maxImageRectWidth) {
