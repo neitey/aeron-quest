@@ -87,11 +87,13 @@ void Aeron_XrSetMenuKeys(int enabled);
  * before it counts. */
 void Aeron_XrSetInputBlocked(int blocked);
 int  Aeron_XrTakeAPressed(void);
-/* B (right controller) / X (left controller) pressed while the menu
- * pointer is on (not in keyboard-only menus, input not blocked); each
- * clears its latch. */
+/* B (right controller) pressed while the menu pointer is on (not in
+ * keyboard-only menus, input not blocked); X and Y (left controller) also
+ * while input is blocked (they put the menu screen away and bring it back,
+ * and change the scene around it). Each clears its latch. */
 int  Aeron_XrTakeMenuBPressed(void);
 int  Aeron_XrTakeMenuXPressed(void);
+int  Aeron_XrTakeMenuYPressed(void);
 
 /* Controller buttons a game can bind to its own actions in flight. */
 typedef enum AeronXrButton {

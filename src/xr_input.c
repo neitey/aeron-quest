@@ -104,12 +104,14 @@ int Aeron_XrTakeAPressed(void) {
 	return pressed;
 }
 
-/* B and X pressed in the menus (pointer on, not keyboard menus, input not
- * blocked). */
+/* B, X and Y pressed in the menus (pointer on, not keyboard menus; B only
+ * while input is not blocked). */
 static int g_xr_menu_b_previous = 1;
 static int g_xr_menu_b_pressed;
 static int g_xr_menu_x_previous = 1;
 static int g_xr_menu_x_pressed;
+static int g_xr_menu_y_previous = 1;
+static int g_xr_menu_y_pressed;
 
 int Aeron_XrTakeMenuBPressed(void) {
 	const int pressed = g_xr_menu_b_pressed;
@@ -120,6 +122,12 @@ int Aeron_XrTakeMenuBPressed(void) {
 int Aeron_XrTakeMenuXPressed(void) {
 	const int pressed = g_xr_menu_x_pressed;
 	g_xr_menu_x_pressed = 0;
+	return pressed;
+}
+
+int Aeron_XrTakeMenuYPressed(void) {
+	const int pressed = g_xr_menu_y_pressed;
+	g_xr_menu_y_pressed = 0;
 	return pressed;
 }
 
@@ -1022,14 +1030,21 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	const AeronXrTouchState physical = touch;
 	{
 		const int menus = g_xr_pointer_enabled && !g_xr_menu_keys && !g_xr_input_blocked;
+		/* The menu scene's own buttons work with the screen put away too
+		 * (input blocked); it drops them while its startup title waits. */
+		const int scene = (g_xr_pointer_enabled || g_xr_input_blocked) && !g_xr_menu_keys;
 		if (menus && physical.b && !g_xr_menu_b_previous) {
 			g_xr_menu_b_pressed = 1;
 		}
-		if (menus && physical.x && !g_xr_menu_x_previous) {
+		if (scene && physical.x && !g_xr_menu_x_previous) {
 			g_xr_menu_x_pressed = 1;
+		}
+		if (scene && physical.y && !g_xr_menu_y_previous) {
+			g_xr_menu_y_pressed = 1;
 		}
 		g_xr_menu_b_previous = physical.b;
 		g_xr_menu_x_previous = physical.x;
+		g_xr_menu_y_previous = physical.y;
 	}
 	if (g_xr_input_blocked) {
 		/* Nothing reaches the game but the A (or right trigger) press it
