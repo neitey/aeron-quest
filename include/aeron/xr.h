@@ -161,9 +161,10 @@ AeronRenderTarget* Aeron_XrStereoPanelTarget(int which, int* width, int* height)
  * are drawn under the console, the console under the beams. */
 void Aeron_XrStereoCommitPanelLayer(int which, const AeronXrPanel* quads, int count);
 /* After the HUD commit (or the backdrop): show the eye images a second
- * time right over the frame panel layer, blended by their alpha
- * (unpremultiplied). The game sets alpha to 1 where something must appear
- * in front of the screen and its frame (the hands) and 0 elsewhere. */
+ * time over the HUD, the screen and its frame, the cards and the console
+ * (under the labels and beams), blended by their alpha (unpremultiplied).
+ * The game sets alpha to 1 where something must appear in front of those
+ * layers (the hands) and 0 elsewhere. */
 void Aeron_XrStereoCommitEyeOverlay(void);
 /* The same, showing only rect[eye] = { x, y, w, h } (eye image pixels) of
  * each eye: the compositor blends just that part (the hands' box), with

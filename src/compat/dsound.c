@@ -59,6 +59,7 @@ typedef struct DSBuffer {
 	int        looping;
 	uint32_t   cursor; /* saved byte position while stopped */
 
+	int   time_exempt; /* DSoundCompat_SetBufferTimeExempt: no slow-motion pitch */
 	int   is3d; /* play positionally (DirectSound3D, mode != DISABLE) */
 	float pos3[3];
 	float vel3[3];
@@ -120,7 +121,15 @@ static float     s_ds_effect_pitch = 1.0f;
 static float     s_ds_other_gain   = 1.0f;
 static DSDevice* s_ds_devices[4];
 
-static int DSoundCompat_IsEffect(const DSBuffer* buffer) { return (buffer->flags & DSBCAPS_CTRLFREQUENCY) != 0; }
+/* Slow motion: the effects (CTRLFREQUENCY buffers) are pitched, the others
+ * (a music stream) are turned down; exempt buffers (voices) neither. */
+static int DSoundCompat_IsEffect(const DSBuffer* buffer) {
+	return (buffer->flags & DSBCAPS_CTRLFREQUENCY) != 0 && !buffer->time_exempt;
+}
+
+static int DSoundCompat_IsOther(const DSBuffer* buffer) {
+	return (buffer->flags & DSBCAPS_CTRLFREQUENCY) == 0 && !buffer->is_primary && !buffer->time_exempt;
+}
 
 static float DSoundCompat_Pitch(const DSBuffer* buffer) {
 	float pitch = 1.0f;
@@ -132,7 +141,7 @@ static float DSoundCompat_Pitch(const DSBuffer* buffer) {
 
 static float DSoundCompat_Gain(const DSBuffer* buffer) {
 	const float gain = DSoundCompat_GainFromMillibels(buffer->volume_mb);
-	return DSoundCompat_IsEffect(buffer) || buffer->is_primary ? gain : gain * s_ds_other_gain;
+	return DSoundCompat_IsOther(buffer) ? gain * s_ds_other_gain : gain;
 }
 
 /* --- DirectSound3D sub-interfaces ----------------------------------------- */
@@ -987,6 +996,20 @@ int AERON_DXAPI DirectSoundCreate(const DSCompatGuid* device_guid, void** outDev
 	return DS_OK;
 }
 
+void DSoundCompat_SetBufferTimeExempt(void* buffer, int exempt) {
+	DSBuffer* b = (DSBuffer*)buffer;
+	if (!b || b->is_primary || b->time_exempt == (exempt != 0)) {
+		return;
+	}
+	DSoundBuffer_LockState(b);
+	b->time_exempt = exempt != 0;
+	if (b->voice) {
+		Aeron_AudioVoiceSetPitch(b->voice, DSoundCompat_Pitch(b));
+		Aeron_AudioVoiceSetGain(b->voice, DSoundCompat_Gain(b));
+	}
+	DSoundBuffer_UnlockState(b);
+}
+
 void DSoundCompat_SetTimeEffect(float effect_pitch, float other_gain) {
 	if (!(effect_pitch > 0.05f)) {
 		effect_pitch = 0.05f;
@@ -1008,7 +1031,7 @@ void DSoundCompat_SetTimeEffect(float effect_pitch, float other_gain) {
 			if (b->voice) {
 				if (DSoundCompat_IsEffect(b)) {
 					Aeron_AudioVoiceSetPitch(b->voice, DSoundCompat_Pitch(b));
-				} else {
+				} else if (DSoundCompat_IsOther(b)) {
 					Aeron_AudioVoiceSetGain(b->voice, DSoundCompat_Gain(b));
 				}
 			}

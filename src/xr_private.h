@@ -19,7 +19,7 @@
 #define AERON_XR_MAX_IMAGES 8
 
 /* Layers submitted per frame at most (projection, HUD quads, panels). */
-#define AERON_XR_MAX_LAYERS 16
+#define AERON_XR_MAX_LAYERS 32 /* used up to the runtime's maxLayerCount */
 
 typedef struct AeronXr {
 	SDL_GPUDevice* device;

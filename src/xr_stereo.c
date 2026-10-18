@@ -109,10 +109,14 @@ enum {
 /* The console layer (a touch panel near the player's lap) has its own
  * fixed-size swapchain, independent of the eye size. */
 /* Panel layers are two panels wide: one per eye when they differ. */
-#define AERON_XR_CONSOLE_WIDTH (2 * 1536)
+/* The console and the cards are one image for both eyes (the hands come
+ * out in front of them through the eye overlay); the controller labels'
+ * layer holds two sheets side by side. */
+#define AERON_XR_CONSOLE_WIDTH 1536
 #define AERON_XR_CONSOLE_HEIGHT 512
-#define AERON_XR_CARD_WIDTH (2 * 1024)
+#define AERON_XR_CARD_WIDTH 1024
 #define AERON_XR_CARD_HEIGHT 768
+#define AERON_XR_LABELS_WIDTH (2 * 1024)
 #define AERON_XR_BEAM_WIDTH 128
 #define AERON_XR_BEAM_HEIGHT 512
 #define AERON_XR_MAX_BEAMS 2
@@ -273,7 +277,7 @@ int Aeron_XrStereoInit(void) {
 															   "aeron.xr.card2",    "aeron.xr.frame",
 															   "aeron.xr.labels" };
 		XrSwapchainCreateInfo info                         = { XR_TYPE_SWAPCHAIN_CREATE_INFO, NULL };
-		/* The controller labels' layer has the cards' size (two halves). */
+		/* The controller labels' layer: the cards' height, two sheets wide. */
 		const int             card     = i == AERON_XR_SLOT_CARD || i == AERON_XR_SLOT_CARD2 || i == AERON_XR_SLOT_LABELS;
 		const int             frame    = i == AERON_XR_SLOT_FRAME;
 		const int             optional = i == AERON_XR_SLOT_CONSOLE || i == AERON_XR_SLOT_HUD_AUX || card ||
@@ -281,6 +285,7 @@ int Aeron_XrStereoInit(void) {
 		const int             hud = i == AERON_XR_SLOT_HUD || i == AERON_XR_SLOT_HUD_WORLD || i == AERON_XR_SLOT_HUD_AUX;
 		g_st.chains[i].width  = i == AERON_XR_SLOT_CONSOLE ? AERON_XR_CONSOLE_WIDTH
 							   : frame                     ? AERON_XR_FRAME_WIDTH
+							   : i == AERON_XR_SLOT_LABELS ? AERON_XR_LABELS_WIDTH
 							   : card                      ? AERON_XR_CARD_WIDTH
 							   : i == AERON_XR_SLOT_BEAM   ? AERON_XR_BEAM_WIDTH
 							   : hud                       ? g_hud_w
@@ -497,8 +502,8 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 		out->hud_aux_target = Aeron_XrStereoSlotTarget(AERON_XR_SLOT_HUD_AUX);
 	}
 	if (g_st.chains[AERON_XR_SLOT_CONSOLE].swapchain) {
-		/* One panel's size; Aeron_XrStereoPanelTarget gives the target. */
-		out->console_width  = g_st.chains[AERON_XR_SLOT_CONSOLE].width / 2;
+		/* The panel's size; Aeron_XrStereoPanelTarget gives the target. */
+		out->console_width  = g_st.chains[AERON_XR_SLOT_CONSOLE].width;
 		out->console_height = g_st.chains[AERON_XR_SLOT_CONSOLE].height;
 	}
 	if (g_st.chains[AERON_XR_SLOT_BEAM].swapchain) {
@@ -507,7 +512,7 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 		out->beam_height = g_st.chains[AERON_XR_SLOT_BEAM].height;
 	}
 	if (g_st.chains[AERON_XR_SLOT_CARD].swapchain) {
-		out->card_width  = g_st.chains[AERON_XR_SLOT_CARD].width / 2;
+		out->card_width  = g_st.chains[AERON_XR_SLOT_CARD].width;
 		out->card_height = g_st.chains[AERON_XR_SLOT_CARD].height;
 	}
 	out->width      = g_st.width;
@@ -1007,7 +1012,8 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		}
 	}
 	/* The cards, then the console: it is the panel the hands reach into;
-	 * the controller labels over all of them. */
+	 * the hands (the eye overlay) over all of these, the controller labels
+	 * over the hands. */
 	{
 		static const int order[AERON_XR_PANEL_COUNT] = { AERON_XR_PANEL_FRAME, AERON_XR_PANEL_CARD, AERON_XR_PANEL_CARD2,
 														 AERON_XR_PANEL_CONSOLE, AERON_XR_PANEL_LABELS };
@@ -1040,10 +1046,10 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 				layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
 			}
 			g_st.layer_count[which] = 0;
-			if (which == AERON_XR_PANEL_FRAME && eye_overlay && count < capacity) {
+			if (which == AERON_XR_PANEL_CONSOLE && eye_overlay && count < capacity) {
 				/* The eye images once more, shown only where their alpha is up
 				 * (the hands): the hands come out in front of the screen and
-				 * its frame. */
+				 * its frame, the HUD, the cards and the console. */
 				g_st.projection_overlay            = g_st.projection;
 				g_st.projection_overlay.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
 													 XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;

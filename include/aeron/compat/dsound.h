@@ -191,6 +191,8 @@ int AERON_DXAPI DirectSoundCreate(const DSCompatGuid* device_guid, void** outDev
  * `other_gain` the volume of the others (e.g. a music stream). Playing
  * buffers follow at once. 1, 1 = as normal. */
 void DSoundCompat_SetTimeEffect(float effect_pitch, float other_gain);
+/* Keeps one buffer out of that (e.g. a voice: it plays as recorded). */
+void DSoundCompat_SetBufferTimeExempt(void* buffer, int exempt);
 
 #ifdef __cplusplus
 }
