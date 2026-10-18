@@ -124,6 +124,12 @@ int Aeron_XrPollButton(AeronXrButton* button, int* shifted);
  * What a hand does physically (Aeron_XrGetHand, grip captures, the menu
  * pointer on the right controller, the menu button) is not swapped. */
 int Aeron_XrLeftHanded(void);
+/* The virtual throttle lever (left stick forward/back moves it; the
+ * virtual gamepad's right trigger reports it), 0..1. A game whose throttle
+ * also changes by other means (keys, autopilot, a new mission) sets the
+ * lever to it while the player is not moving the lever. */
+float Aeron_XrThrottleLever(void);
+void Aeron_XrSetThrottleLever(float value);
 /* A tracked VR controller for touch panels the game draws itself. */
 typedef struct AeronXrHand {
 	int   valid;          /* pose tracked this frame */

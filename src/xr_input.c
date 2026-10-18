@@ -283,6 +283,12 @@ typedef struct AeronXrInput {
 
 static AeronXrInput g_in;
 
+float Aeron_XrThrottleLever(void) { return g_in.mapper.throttle; }
+
+void Aeron_XrSetThrottleLever(float value) {
+	g_in.mapper.throttle = value < 0.0f ? 0.0f : value > 1.0f ? 1.0f : value;
+}
+
 static XrAction Aeron_XrCreateAction(const char* name, const char* localized, XrActionType type,
 									 int per_hand) {
 	XrActionCreateInfo info   = { XR_TYPE_ACTION_CREATE_INFO, NULL };
