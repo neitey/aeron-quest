@@ -20,6 +20,9 @@
  *   left trigger                  -> LEFT_TRIGGER            -> (unbound)
  *   right trigger                 -> SOUTH                   -> fire
  *   right grip                    -> EAST                    -> target in sights
+ *   (in flight the game takes the face buttons, the left trigger and grip,
+ *   the stick clicks and the right grip as keys of its own instead:
+ *   Aeron_XrSetFlightButtons)
  *   A / B                         -> WEST / NORTH            -> button 3 / 4
  *   X / Y                         -> LEFT / RIGHT SHOULDER   -> button 5 / 6
  *   left grip                     -> BACK                    -> button 7

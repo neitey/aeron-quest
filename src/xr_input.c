@@ -1115,9 +1115,12 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 				mapped.a = mapped.b = mapped.x = mapped.y = 0;
 				mapped.left_stick_click = mapped.right_stick_click = 0;
 			} else if (g_xr_flight_buttons) {
+				/* Flight buttons (the game's own key per button, the right
+				 * grip among them) are not gamepad buttons as well. */
 				mapped.a = mapped.b = mapped.x = mapped.y = 0;
 				mapped.left_trigger      = 0.0f;
 				mapped.left_grip         = 0.0f;
+				mapped.right_grip        = 0.0f;
 				mapped.left_stick_click  = 0;
 				mapped.right_stick_click = 0;
 			}
