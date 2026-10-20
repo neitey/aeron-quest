@@ -963,6 +963,66 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		view->subImage.imageRect.extent.width  = g_st.width;
 		view->subImage.imageRect.extent.height = g_st.height;
 	}
+	/* The layer budget: when this frame wants more layers than the runtime
+	 * takes (capacity), the least needed go first - the controller labels,
+	 * then the hands over the panels (eye overlay), then the last cockpit
+	 * HUD panels, then the rest - instead of xrEndFrame failing with
+	 * XR_ERROR_LAYER_LIMIT_EXCEEDED. Allowances in keep order. */
+	int allow_panels, allow_eye_overlay, allow_hud_world, allow_hud, allow_beams;
+	int allow_group[AERON_XR_PANEL_COUNT];
+	{
+		int panels_wanted = 0;
+		for (int i = 0; i < g_st.panel_count; ++i) {
+			const int s = g_st.panels[i].source == 1 ? AERON_XR_SLOT_HUD_AUX : AERON_XR_SLOT_HUD;
+			panels_wanted += g_st.chains[s].released_once ? 1 : 0;
+		}
+		int group_wanted[AERON_XR_PANEL_COUNT];
+		for (int w = 0; w < AERON_XR_PANEL_COUNT; ++w) {
+			group_wanted[w] = g_st.chains[Aeron_XrStereoPanelSlot(w)].released_once ? g_st.layer_count[w] : 0;
+		}
+		const int beams_wanted = g_st.chains[AERON_XR_SLOT_BEAM].released_once ? g_st.beam_count : 0;
+		const int hud_world_wanted = g_st.hud_world.visible && g_st.chains[AERON_XR_SLOT_HUD_WORLD].released_once;
+		const int hud_wanted =
+			g_st.hud.visible && g_st.hud.size[0] > 0.0f && g_st.chains[AERON_XR_SLOT_HUD].released_once;
+		int left = (int)capacity - 1 - (screen_count < (int)capacity - 1 ? screen_count : (int)capacity - 1);
+		allow_beams                           = left < beams_wanted ? left : beams_wanted;
+		left                                 -= allow_beams;
+		static const int keep[] = { AERON_XR_PANEL_CARD2, AERON_XR_PANEL_CARD, AERON_XR_PANEL_CONSOLE,
+									AERON_XR_PANEL_FRAME };
+		for (int w = 0; w < AERON_XR_PANEL_COUNT; ++w) {
+			allow_group[w] = 0;
+		}
+		for (size_t k = 0; k < sizeof keep / sizeof keep[0]; ++k) {
+			const int want  = group_wanted[keep[k]];
+			allow_group[keep[k]] = want < left ? want : left;
+			left -= allow_group[keep[k]];
+		}
+		allow_hud_world = hud_world_wanted && left > 0;
+		left -= allow_hud_world;
+		allow_hud = hud_wanted && left > 0;
+		left -= allow_hud;
+		allow_panels = panels_wanted < left ? panels_wanted : left;
+		left -= allow_panels;
+		allow_eye_overlay = eye_overlay && left > 0;
+		left -= allow_eye_overlay;
+		allow_group[AERON_XR_PANEL_LABELS] = group_wanted[AERON_XR_PANEL_LABELS] < left ? group_wanted[AERON_XR_PANEL_LABELS] : left;
+		const int wanted = 1 + screen_count + beams_wanted + group_wanted[AERON_XR_PANEL_CARD2] +
+						   group_wanted[AERON_XR_PANEL_CARD] + group_wanted[AERON_XR_PANEL_CONSOLE] +
+						   group_wanted[AERON_XR_PANEL_FRAME] + hud_world_wanted + hud_wanted + panels_wanted +
+						   (eye_overlay ? 1 : 0) + group_wanted[AERON_XR_PANEL_LABELS];
+		static int s_logged_over;
+		if (wanted > (int)capacity && wanted != s_logged_over) {
+			s_logged_over = wanted;
+			Aeron_LogWarn("aeron.xr",
+						  "%d layers wanted, %u allowed: dropped labels %d, hand overlay %d, HUD panels %d, "
+						  "others %d",
+						  wanted, capacity, group_wanted[AERON_XR_PANEL_LABELS] - allow_group[AERON_XR_PANEL_LABELS],
+						  (eye_overlay ? 1 : 0) - allow_eye_overlay, panels_wanted - allow_panels,
+						  wanted - (int)capacity -
+							  (group_wanted[AERON_XR_PANEL_LABELS] - allow_group[AERON_XR_PANEL_LABELS]) -
+							  ((eye_overlay ? 1 : 0) - allow_eye_overlay) - (panels_wanted - allow_panels));
+		}
+	}
 	memset(&g_st.projection, 0, sizeof g_st.projection);
 	g_st.projection.type      = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
 	g_st.projection.space     = g_xr.local_space;
@@ -974,23 +1034,24 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 	}
 
 	/* World HUD first: the head HUD is composited on top of it. */
-	if (g_st.hud_world.visible && g_st.chains[AERON_XR_SLOT_HUD_WORLD].released_once && count < capacity) {
+	if (allow_hud_world && count < capacity) {
 		Aeron_XrFillQuad(&g_st.hud_world_quad, AERON_XR_SLOT_HUD_WORLD, &g_st.hud_world);
 		layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.hud_world_quad;
 	}
-	if (g_st.hud.visible && g_st.hud.size[0] > 0.0f && g_st.chains[AERON_XR_SLOT_HUD].released_once &&
-		count < capacity) {
+	if (allow_hud && count < capacity) {
 		Aeron_XrFillQuad(&g_st.hud_quad, AERON_XR_SLOT_HUD, &g_st.hud);
 		layers[count++] = (const XrCompositionLayerBaseHeader*)&g_st.hud_quad;
 	}
 	{
-		for (int i = 0; i < g_st.panel_count && count < capacity; ++i) {
+		int panels_left = allow_panels;
+		for (int i = 0; i < g_st.panel_count && count < capacity && panels_left > 0; ++i) {
 			const AeronXrPanel*     p    = &g_st.panels[i];
 			XrCompositionLayerQuad* quad = &g_st.panel_quads[i];
 			const int slot = p->source == 1 ? AERON_XR_SLOT_HUD_AUX : AERON_XR_SLOT_HUD;
 			if (!g_st.chains[slot].released_once) {
 				continue;
 			}
+			--panels_left;
 			memset(quad, 0, sizeof *quad);
 			quad->type                              = XR_TYPE_COMPOSITION_LAYER_QUAD;
 			quad->layerFlags                        = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
@@ -1020,7 +1081,8 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		for (int o = 0; o < AERON_XR_PANEL_COUNT; ++o) {
 			const int which = order[o];
 			const int slot  = Aeron_XrStereoPanelSlot(which);
-			for (int i = 0; i < g_st.layer_count[which] && g_st.chains[slot].released_once && count < capacity;
+			for (int i = 0; i < g_st.layer_count[which] && i < allow_group[which] &&
+							g_st.chains[slot].released_once && count < capacity;
 				 ++i) {
 				const AeronXrPanel*     p    = &g_st.layer_panels[which][i];
 				XrCompositionLayerQuad* quad = &g_st.layer_quads[which][i];
@@ -1046,7 +1108,7 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 				layers[count++]       = (const XrCompositionLayerBaseHeader*)quad;
 			}
 			g_st.layer_count[which] = 0;
-			if (which == AERON_XR_PANEL_CONSOLE && eye_overlay && count < capacity) {
+			if (which == AERON_XR_PANEL_CONSOLE && allow_eye_overlay && count < capacity) {
 				/* The eye images once more, shown only where their alpha is up
 				 * (the hands): the hands come out in front of the screen and
 				 * its frame, the HUD, the cards and the console. */
@@ -1081,7 +1143,9 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		}
 	}
 	/* Pointer beams over everything they point at. */
-	for (int i = 0; i < g_st.beam_count && g_st.chains[AERON_XR_SLOT_BEAM].released_once && count < capacity; ++i) {
+	for (int i = 0; i < g_st.beam_count && i < allow_beams && g_st.chains[AERON_XR_SLOT_BEAM].released_once &&
+					count < capacity;
+		 ++i) {
 		const AeronXrPanel*     p    = &g_st.beams[i];
 		XrCompositionLayerQuad* quad = &g_st.beam_quads[i];
 		memset(quad, 0, sizeof *quad);
