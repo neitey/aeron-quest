@@ -522,6 +522,20 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 			g_xr.max_layers = system_properties.graphicsProperties.maxLayerCount;
 		}
 	}
+	{
+		/* Meta's runtime reports 32 but fails xrEndFrame with
+		 * XR_ERROR_LAYER_LIMIT_EXCEEDED past 16 layers; AERON_XR_MAX_LAYERS
+		 * overrides the budget (the runtime's figure stays the ceiling). */
+		const char* env    = SDL_getenv("AERON_XR_MAX_LAYERS");
+		uint32_t    budget = env && env[0] ? (uint32_t)SDL_atoi(env) : 16u;
+		if (budget < XR_MIN_COMPOSITION_LAYERS_SUPPORTED) {
+			budget = XR_MIN_COMPOSITION_LAYERS_SUPPORTED;
+		}
+		if (budget < g_xr.max_layers) {
+			g_xr.max_layers = budget;
+		}
+		Aeron_LogInfo("aeron.xr", "composition layer budget: %u", g_xr.max_layers);
+	}
 
 	result = SDL_CreateGPUXRSession(device, &session_info, &g_xr.session);
 	if (XR_FAILED(result)) {
