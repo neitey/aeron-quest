@@ -31,7 +31,10 @@
  *   left menu button              -> GUIDE (consumed as Esc by xr.c)
  *
  * Left-handed controls (AERON_XR_LEFT_HANDED=1) swap the two controllers
- * before this mapping (xr_input.c), so the table reads mirrored.
+ * before this mapping (xr_input.c), so the table reads mirrored. Swapped
+ * thumbsticks (Aeron_XrSetSwapSticks) then trade only the two sticks'
+ * axes (AeronXrTouchSwapSticks): the thumbstick X/Y rows above come from
+ * the other stick, every button row stays.
  *
  * The throttle is a "virtual lever": pushing the left stick forward/back
  * moves it and it stays where it was left, like a HOTAS throttle.
@@ -76,6 +79,11 @@ typedef struct AeronXrTouchMapper {
 } AeronXrTouchMapper;
 
 void AeronXrTouchMapper_Init(AeronXrTouchMapper* mapper);
+
+/* Swapped thumbsticks: the two sticks' axes trade places; the stick clicks
+ * and everything else stay. (An idle controller reports a centred stick, so
+ * the per-hand `active` flags are left alone.) */
+void AeronXrTouchSwapSticks(AeronXrTouchState* touch);
 
 /* Fills `out` as a connected standardized gamepad. `dt_seconds` drives the
  * throttle lever. Identity fields (name, guid, instance_id) are set by the

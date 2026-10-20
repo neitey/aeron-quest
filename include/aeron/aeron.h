@@ -124,6 +124,16 @@ int Aeron_XrPollButton(AeronXrButton* button, int* shifted);
  * What a hand does physically (Aeron_XrGetHand, grip captures, the menu
  * pointer on the right controller, the menu button) is not swapped. */
 int Aeron_XrLeftHanded(void);
+/* Swapped thumbsticks (the game's setting; set every frame or on change,
+ * off by default): on the virtual gamepad the two thumbsticks trade what
+ * they do - the stick that steered (yaw / pitch) rolls and moves the
+ * throttle lever, and the other one steers. Only the stick axes move: the
+ * stick clicks, triggers, grips, A/B/X/Y and the menu button stay where
+ * they are. Applied on top of left-handed controls (both together: the
+ * right stick steers again, every button stays mirrored), before
+ * AERON_XR_INVERT_PITCH and the virtual flight stick, which go with the
+ * steering stick. Menu-keys mode and the menu pointer are not affected. */
+void Aeron_XrSetSwapSticks(int enabled);
 /* The virtual throttle lever (left stick forward/back moves it; the
  * virtual gamepad's right trigger reports it), 0..1. A game whose throttle
  * also changes by other means (keys, autopilot, a new mission) sets the

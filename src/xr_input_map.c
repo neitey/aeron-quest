@@ -15,6 +15,16 @@ void AeronXrTouchMapper_Init(AeronXrTouchMapper* mapper) {
 	mapper->throttle_zone_deg = 30.0f;
 }
 
+void AeronXrTouchSwapSticks(AeronXrTouchState* touch) {
+	float stick[2];
+	if (!touch) {
+		return;
+	}
+	memcpy(stick, touch->left_stick, sizeof stick);
+	memcpy(touch->left_stick, touch->right_stick, sizeof stick);
+	memcpy(touch->right_stick, stick, sizeof stick);
+}
+
 /* Splits the left stick into roll (x) and throttle (y) by direction: the
  * throttle only within throttle_zone_deg of straight forward/back, roll
  * everywhere else. Each gets the stick's whole deflection in its zone. */

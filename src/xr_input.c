@@ -64,6 +64,17 @@ void Aeron_XrSetVirtualStick(int active, float x, float y, float roll) {
 	g_xr_vstick[2]     = active ? roll : 0.0f;
 }
 
+/* The thumbsticks' game roles traded (Aeron_XrSetSwapSticks). */
+static int g_xr_swap_sticks;
+
+void Aeron_XrSetSwapSticks(int enabled) {
+	enabled = enabled != 0;
+	if (enabled != g_xr_swap_sticks) {
+		Aeron_LogInfo("aeron.xr", "thumbsticks %s", enabled ? "swapped" : "back in their own roles");
+	}
+	g_xr_swap_sticks = enabled;
+}
+
 #define AERON_XR_BUTTON_QUEUE 32
 
 typedef struct AeronXrButtonPress {
@@ -1129,6 +1140,13 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 				mapped.right_grip        = 0.0f;
 				mapped.left_stick_click  = 0;
 				mapped.right_stick_click = 0;
+			}
+			if (g_xr_swap_sticks && !g_xr_menu_keys) {
+				/* Swapped thumbsticks: only the stick axes trade roles
+				 * (after left-handed controls' swap, before the pitch
+				 * invert and the flight stick, which follow the steering
+				 * stick). */
+				AeronXrTouchSwapSticks(&mapped);
 			}
 			if (!g_xr_menu_keys) {
 				/* AERON_XR_INVERT_PITCH=1: thumbstick back = nose down (the
