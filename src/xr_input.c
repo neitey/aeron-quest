@@ -930,6 +930,11 @@ static void Aeron_XrApplyPointer(AeronInputSnapshot* input, const AeronXrTouchSt
 		}
 		buttons = 0;
 	}
+	/* mouse.buttons is a level that only SDL events (or the clear while the
+	 * platform pointer is outside the content) reset: drop the bits the ray
+	 * let go of, or a platform pointer resting inside the content (a game
+	 * warping SDL's mouse) keeps the ray's click held for good. */
+	input->mouse.buttons &= ~(previous & ~buttons);
 	input->mouse.buttons |= buttons;
 	input->mouse.pressed_buttons |= buttons & ~previous;
 	input->mouse.released_buttons |= previous & ~buttons;
