@@ -23,19 +23,51 @@ static SDL_LogPriority Aeron_LogSdlPriority(AeronLogLevel level) {
 	}
 }
 
+static SDL_IOStream*        g_log_file;
+static SDL_LogOutputFunction g_sdl_default_output;
+static void*                 g_sdl_default_userdata;
+
+/* SDL's own messages (GPU, OpenXR, video...) go to the log file too: they say
+ * why a device or VR session could not be created, and on Windows they would
+ * otherwise only reach the debugger. Aeron's own messages use the application
+ * category and are already written by Aeron_LogMessageV. */
+static void SDLCALL Aeron_LogSdlOutput(void* userdata, int category, SDL_LogPriority priority, const char* message) {
+	(void)userdata;
+	if (category != SDL_LOG_CATEGORY_APPLICATION && g_log_file) {
+		static const char* const names[] = {"app", "error", "assert", "system", "audio", "video", "render", "input",
+											"test", "gpu"};
+		const char* name = category >= 0 && category < (int)(sizeof names / sizeof names[0]) ? names[category] : "sdl";
+		SDL_IOprintf(g_log_file, "%10.3f %s sdl.%s: %s\n", (double)SDL_GetTicks() / 1000.0,
+					 priority >= SDL_LOG_PRIORITY_ERROR  ? "ERROR"
+					 : priority >= SDL_LOG_PRIORITY_WARN ? "WARN "
+														 : "INFO ",
+					 name, message ? message : "");
+		SDL_FlushIO(g_log_file);
+	}
+	if (g_sdl_default_output) {
+		g_sdl_default_output(g_sdl_default_userdata, category, priority, message);
+	}
+}
+
 /* Optional plain-text log file (AERON_LOG_FILE=path). GUI-subsystem Windows
  * builds have no console, so this is how a tester can send logs back. */
 static SDL_IOStream* Aeron_LogFile(void) {
-	static int           opened;
-	static SDL_IOStream* file;
+	static int opened;
 	if (!opened) {
 		const char* path = SDL_getenv("AERON_LOG_FILE");
 		opened           = 1;
 		if (path && path[0]) {
-			file = SDL_IOFromFile(path, "w");
+			g_log_file = SDL_IOFromFile(path, "w");
+		}
+		if (g_log_file) {
+			SDL_GetLogOutputFunction(&g_sdl_default_output, &g_sdl_default_userdata);
+			SDL_SetLogOutputFunction(Aeron_LogSdlOutput, NULL);
+			/* GPU device and OpenXR setup report their reasons at warning and
+			 * debug level, which SDL hides by default. */
+			SDL_SetLogPriority(SDL_LOG_CATEGORY_GPU, SDL_LOG_PRIORITY_DEBUG);
 		}
 	}
-	return file;
+	return g_log_file;
 }
 
 static const char* Aeron_LogLevelName(AeronLogLevel level) {
