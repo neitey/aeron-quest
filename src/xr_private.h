@@ -133,6 +133,7 @@ typedef struct AeronXr {
 	int         has_bd_controller;   /* XR_BD_controller_interaction: Pico Neo 3, Pico 4 */
 	int         has_bd_ultra;        /* XR_BD_ultra_controller_interaction: Pico 4 Ultra */
 	int         has_htc_focus3;      /* XR_HTC_vive_focus3_controller_interaction */
+	int         has_hp_mr;           /* XR_EXT_hp_mixed_reality_controller: Reverb G2 */
 	/* Controller models from the runtime (xr_render_model.c). */
 	int         has_fb_render_model;           /* XR_FB_render_model (Quest) */
 	int         has_ext_render_model;          /* XR_EXT_render_model */
