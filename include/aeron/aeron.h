@@ -71,8 +71,8 @@ int Aeron_XrIsPresenting(void);
  * headset taken off, system menu or guardian open. Games should pause. */
 int Aeron_XrIsUnfocused(void);
 /* Menus: the right VR controller points at the virtual screen as a mouse
- * (trigger = left click, grip = right click). Disable during flight so the
- * trigger fires instead. Enabled by default. */
+ * (trigger = left click; the grips click nothing). Disable during flight so
+ * the trigger fires instead. Enabled by default. */
 void Aeron_XrSetPointerEnabled(int enabled);
 /* Menus that are driven by the keyboard only (e.g. a game's in-cockpit
  * launch menu): while enabled, either thumbstick sends the arrow keys (with

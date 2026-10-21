@@ -6,7 +6,7 @@
  *   their normal gamepad bindings and rebinding UI.
  * - While the pointer is enabled (menus), the right controller's aim ray is
  *   intersected with the virtual screen and drives the mouse: trigger = left
- *   click, grip = right click.
+ *   click (the grips click nothing: a resting grip must not select).
  * - The left menu button is delivered as Escape.
  * - Menu-keys mode (Aeron_XrSetMenuKeys) turns sticks and face buttons into
  *   arrow/Enter/Space/Escape keys for keyboard-only menus.
@@ -918,9 +918,6 @@ static void Aeron_XrApplyPointer(AeronInputSnapshot* input, const AeronXrTouchSt
 				if (touch->right_trigger >= 0.5f) {
 					buttons |= AERON_MOUSE_BUTTON_LEFT;
 				}
-				if (touch->right_grip >= 0.5f) {
-					buttons |= AERON_MOUSE_BUTTON_RIGHT;
-				}
 			}
 		}
 	} else {
@@ -930,9 +927,6 @@ static void Aeron_XrApplyPointer(AeronInputSnapshot* input, const AeronXrTouchSt
 	if (!hit && previous) {
 		if (touch->right_trigger >= 0.5f) {
 			buttons |= previous & AERON_MOUSE_BUTTON_LEFT;
-		}
-		if (touch->right_grip >= 0.5f) {
-			buttons |= previous & AERON_MOUSE_BUTTON_RIGHT;
 		}
 	}
 	if (g_xr_pointer_holdoff) {
