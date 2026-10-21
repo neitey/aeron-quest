@@ -411,7 +411,9 @@ int Aeron_XrInputInit(void) {
 			{ g_in.y, Aeron_XrPath("/user/hand/left/input/y/click") },
 			{ g_in.menu, Aeron_XrPath("/user/hand/left/input/menu/click") },
 		};
-		/* Valve Index as a courtesy for SteamVR users. */
+		/* Valve Index (SteamVR). The system button belongs to SteamVR, so the
+		 * game menu is a press on the left trackpad; A/B on the left hand are
+		 * X/Y. */
 		const XrActionSuggestedBinding index[] = {
 			{ g_in.stick, Aeron_XrPath("/user/hand/left/input/thumbstick") },
 			{ g_in.stick, Aeron_XrPath("/user/hand/right/input/thumbstick") },
@@ -431,7 +433,85 @@ int Aeron_XrInputInit(void) {
 			{ g_in.b, Aeron_XrPath("/user/hand/right/input/b/click") },
 			{ g_in.x, Aeron_XrPath("/user/hand/left/input/a/click") },
 			{ g_in.y, Aeron_XrPath("/user/hand/left/input/b/click") },
-			{ g_in.menu, Aeron_XrPath("/user/hand/left/input/system/click") },
+			{ g_in.menu, Aeron_XrPath("/user/hand/left/input/trackpad/force") },
+		};
+		/* HTC Vive wands: the trackpad is the stick (pressed: stick click), the
+		 * grip buttons squeeze; only two menu buttons for the face buttons:
+		 * left = game menu, right = A (next target). */
+		const XrActionSuggestedBinding vive[] = {
+			{ g_in.stick, Aeron_XrPath("/user/hand/left/input/trackpad") },
+			{ g_in.stick, Aeron_XrPath("/user/hand/right/input/trackpad") },
+			{ g_in.trigger, Aeron_XrPath("/user/hand/left/input/trigger/value") },
+			{ g_in.trigger, Aeron_XrPath("/user/hand/right/input/trigger/value") },
+			{ g_in.grip, Aeron_XrPath("/user/hand/left/input/squeeze/click") },
+			{ g_in.grip, Aeron_XrPath("/user/hand/right/input/squeeze/click") },
+			{ g_in.stick_click, Aeron_XrPath("/user/hand/left/input/trackpad/click") },
+			{ g_in.stick_click, Aeron_XrPath("/user/hand/right/input/trackpad/click") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/left/input/aim/pose") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/right/input/aim/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/left/input/grip/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/right/input/grip/pose") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/left/output/haptic") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/right/output/haptic") },
+			{ g_in.a, Aeron_XrPath("/user/hand/right/input/menu/click") },
+			{ g_in.menu, Aeron_XrPath("/user/hand/left/input/menu/click") },
+		};
+		/* Windows Mixed Reality motion controllers: thumbstick as the stick,
+		 * trackpad presses as A (right) / X (left), right menu as B. */
+		const XrActionSuggestedBinding wmr[] = {
+			{ g_in.stick, Aeron_XrPath("/user/hand/left/input/thumbstick") },
+			{ g_in.stick, Aeron_XrPath("/user/hand/right/input/thumbstick") },
+			{ g_in.trigger, Aeron_XrPath("/user/hand/left/input/trigger/value") },
+			{ g_in.trigger, Aeron_XrPath("/user/hand/right/input/trigger/value") },
+			{ g_in.grip, Aeron_XrPath("/user/hand/left/input/squeeze/click") },
+			{ g_in.grip, Aeron_XrPath("/user/hand/right/input/squeeze/click") },
+			{ g_in.stick_click, Aeron_XrPath("/user/hand/left/input/thumbstick/click") },
+			{ g_in.stick_click, Aeron_XrPath("/user/hand/right/input/thumbstick/click") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/left/input/aim/pose") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/right/input/aim/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/left/input/grip/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/right/input/grip/pose") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/left/output/haptic") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/right/output/haptic") },
+			{ g_in.a, Aeron_XrPath("/user/hand/right/input/trackpad/click") },
+			{ g_in.b, Aeron_XrPath("/user/hand/right/input/menu/click") },
+			{ g_in.x, Aeron_XrPath("/user/hand/left/input/trackpad/click") },
+			{ g_in.menu, Aeron_XrPath("/user/hand/left/input/menu/click") },
+		};
+		/* HP Reverb G2 controllers: Touch's layout without touch sensors. */
+		const XrActionSuggestedBinding hp_mr[] = {
+			{ g_in.stick, Aeron_XrPath("/user/hand/left/input/thumbstick") },
+			{ g_in.stick, Aeron_XrPath("/user/hand/right/input/thumbstick") },
+			{ g_in.trigger, Aeron_XrPath("/user/hand/left/input/trigger/value") },
+			{ g_in.trigger, Aeron_XrPath("/user/hand/right/input/trigger/value") },
+			{ g_in.grip, Aeron_XrPath("/user/hand/left/input/squeeze/value") },
+			{ g_in.grip, Aeron_XrPath("/user/hand/right/input/squeeze/value") },
+			{ g_in.stick_click, Aeron_XrPath("/user/hand/left/input/thumbstick/click") },
+			{ g_in.stick_click, Aeron_XrPath("/user/hand/right/input/thumbstick/click") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/left/input/aim/pose") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/right/input/aim/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/left/input/grip/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/right/input/grip/pose") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/left/output/haptic") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/right/output/haptic") },
+			{ g_in.a, Aeron_XrPath("/user/hand/right/input/a/click") },
+			{ g_in.b, Aeron_XrPath("/user/hand/right/input/b/click") },
+			{ g_in.x, Aeron_XrPath("/user/hand/left/input/x/click") },
+			{ g_in.y, Aeron_XrPath("/user/hand/left/input/y/click") },
+			{ g_in.menu, Aeron_XrPath("/user/hand/left/input/menu/click") },
+		};
+		/* Any runtime: the Khronos simple controller (pointer + select +
+		 * menu; enough for the menus, not for flying). */
+		const XrActionSuggestedBinding simple[] = {
+			{ g_in.trigger, Aeron_XrPath("/user/hand/left/input/select/click") },
+			{ g_in.trigger, Aeron_XrPath("/user/hand/right/input/select/click") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/left/input/aim/pose") },
+			{ g_in.aim, Aeron_XrPath("/user/hand/right/input/aim/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/left/input/grip/pose") },
+			{ g_in.grip_pose, Aeron_XrPath("/user/hand/right/input/grip/pose") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/left/output/haptic") },
+			{ g_in.haptic, Aeron_XrPath("/user/hand/right/output/haptic") },
+			{ g_in.menu, Aeron_XrPath("/user/hand/left/input/menu/click") },
 		};
 		/* The same bindings plus capacitive touch. A suggestion replaces any
 		 * earlier one for the profile, so fall back to the plain set if the
@@ -470,8 +550,53 @@ int Aeron_XrInputInit(void) {
 			touch_ok = Aeron_XrSuggest("/interaction_profiles/oculus/touch_controller", touch,
 									   (uint32_t)SDL_arraysize(touch));
 		}
-		Aeron_XrSuggest("/interaction_profiles/valve/index_controller", index,
-						(uint32_t)SDL_arraysize(index));
+		{
+			/* Index: plus its touch sensors (trigger, stick, A/B; the trackpad,
+			 * where the thumb rests, stands in for the thumb rest). */
+			XrActionSuggestedBinding index_ext[SDL_arraysize(index) + 12];
+			uint32_t                 index_count = 0;
+			for (uint32_t k = 0; k < (uint32_t)SDL_arraysize(index); ++k) {
+				index_ext[index_count++] = index[k];
+			}
+			if (g_in.trigger_touch && g_in.thumb_touch) {
+				static const char* const index_thumb_paths[] = {
+					"/user/hand/left/input/thumbstick/touch", "/user/hand/right/input/thumbstick/touch",
+					"/user/hand/left/input/a/touch",          "/user/hand/left/input/b/touch",
+					"/user/hand/right/input/a/touch",         "/user/hand/right/input/b/touch",
+					"/user/hand/left/input/trackpad/touch",   "/user/hand/right/input/trackpad/touch",
+				};
+				index_ext[index_count++] = (XrActionSuggestedBinding) {
+					g_in.trigger_touch, Aeron_XrPath("/user/hand/left/input/trigger/touch") };
+				index_ext[index_count++] = (XrActionSuggestedBinding) {
+					g_in.trigger_touch, Aeron_XrPath("/user/hand/right/input/trigger/touch") };
+				for (uint32_t k = 0; k < (uint32_t)SDL_arraysize(index_thumb_paths); ++k) {
+					index_ext[index_count++] =
+						(XrActionSuggestedBinding) { g_in.thumb_touch, Aeron_XrPath(index_thumb_paths[k]) };
+				}
+				if (g_in.thumbrest_touch) {
+					index_ext[index_count++] = (XrActionSuggestedBinding) {
+						g_in.thumbrest_touch, Aeron_XrPath("/user/hand/left/input/trackpad/touch") };
+					index_ext[index_count++] = (XrActionSuggestedBinding) {
+						g_in.thumbrest_touch, Aeron_XrPath("/user/hand/right/input/trackpad/touch") };
+				}
+			}
+			if (Aeron_XrSuggest("/interaction_profiles/valve/index_controller", index_ext, index_count)) {
+				g_in.touch_bound = g_in.touch_bound || index_count > (uint32_t)SDL_arraysize(index);
+				touch_ok         = 1;
+			} else if (Aeron_XrSuggest("/interaction_profiles/valve/index_controller", index,
+									   (uint32_t)SDL_arraysize(index))) {
+				touch_ok = 1;
+			}
+		}
+		touch_ok |= Aeron_XrSuggest("/interaction_profiles/htc/vive_controller", vive, (uint32_t)SDL_arraysize(vive));
+		touch_ok |= Aeron_XrSuggest("/interaction_profiles/microsoft/motion_controller", wmr,
+									(uint32_t)SDL_arraysize(wmr));
+		if (g_xr.has_hp_mr) {
+			touch_ok |= Aeron_XrSuggest("/interaction_profiles/hp/mixed_reality_controller", hp_mr,
+										(uint32_t)SDL_arraysize(hp_mr));
+		}
+		touch_ok |= Aeron_XrSuggest("/interaction_profiles/khr/simple_controller", simple,
+									(uint32_t)SDL_arraysize(simple));
 		{
 			/* Pico 4 / Neo 3 / 4 Ultra and HTC Focus 3 controllers: Touch's
 			 * layout (A/B right, X/Y left, menu left), with touch sensors on

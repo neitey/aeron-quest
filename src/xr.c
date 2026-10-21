@@ -159,6 +159,7 @@ static void Aeron_XrPickExtensions(void) {
 		XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_BD_ULTRA_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
+		XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME,
 		/* Controller models the runtime draws for us (xr_render_model.c). */
 		XR_FB_RENDER_MODEL_EXTENSION_NAME,
 		XR_EXT_RENDER_MODEL_EXTENSION_NAME,
@@ -261,6 +262,8 @@ static void Aeron_XrPickExtensions(void) {
 			g_xr.has_bd_ultra = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME) == 0) {
 			g_xr.has_htc_focus3 = 1;
+		} else if (strcmp(g_xr.extensions[i], XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME) == 0) {
+			g_xr.has_hp_mr = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_FB_RENDER_MODEL_EXTENSION_NAME) == 0) {
 			g_xr.has_fb_render_model = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0) {

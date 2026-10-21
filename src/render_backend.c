@@ -1526,6 +1526,8 @@ int Aeron_RenderBackendInit(void) {
 		/* No usable OpenXR runtime/headset: keep the desktop game working. */
 		Aeron_LogWarn("aeron", "GPU device creation with OpenXR failed: %s; continuing without XR",
 					  SDL_GetError());
+		Aeron_LogWarn("aeron.xr", "VR: no OpenXR runtime or headset available (on PC: start SteamVR or Meta "
+								  "Quest Link and set it as the active OpenXR runtime); running on the desktop");
 		Aeron_XrSetRequested(0);
 		g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
 	}
