@@ -30,6 +30,9 @@ typedef struct AeronXr {
 	/* LOCAL recentred on the head: local_space is LOCAL offset by
 	 * local_pose (yaw + position of the head when recentred). */
 	XrSpace        view_space;
+	/* LOCAL as it was at the start, kept to check where the runtime puts a
+	 * new LOCAL space (the Steam Frame puts it at the head's heading). */
+	XrSpace        base_space;
 	XrPosef        local_pose;
 	int            recenter_pending;
 	int            recenter_frames;

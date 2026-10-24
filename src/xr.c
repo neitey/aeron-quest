@@ -121,7 +121,7 @@ double Aeron_XrDisplayRefreshRate(void) { return 0.0; }
 
 #include "xr_private.h"
 
-static int Aeron_XrSetLocalPose(const XrPosef* pose);
+static int Aeron_XrSetLocalPose(const XrPosef* pose, XrTime time);
 
 AeronXr g_xr;
 
@@ -734,6 +734,9 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 		return 0;
 	}
 	g_xr.local_pose.orientation.w = 1.0f;
+	if (XR_FAILED(g_xr.xrCreateReferenceSpace(g_xr.session, &space_info, &g_xr.base_space))) {
+		g_xr.base_space = XR_NULL_HANDLE;
+	}
 	{
 		XrReferenceSpaceCreateInfo view_info = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO, NULL };
 		view_info.referenceSpaceType         = XR_REFERENCE_SPACE_TYPE_VIEW;
@@ -845,6 +848,10 @@ void Aeron_XrShutdown(void) {
 	if (g_xr.local_space && g_xr.xrDestroySpace) {
 		g_xr.xrDestroySpace(g_xr.local_space);
 	}
+	if (g_xr.base_space && g_xr.xrDestroySpace) {
+		g_xr.xrDestroySpace(g_xr.base_space);
+		g_xr.base_space = XR_NULL_HANDLE;
+	}
 	/* xrDestroySession is valid in any session state; xrEndSession is only
 	 * valid after the runtime moved the session to STOPPING. */
 	if (g_xr.session && g_xr.xrDestroySession) {
@@ -900,7 +907,7 @@ int Aeron_XrPollEvents(void) {
 				XrPosef identity;
 				SDL_zero(identity);
 				identity.orientation.w = 1.0f;
-				Aeron_XrSetLocalPose(&identity);
+				Aeron_XrSetLocalPose(&identity, g_xr.predicted_display_time);
 				g_xr.recenter_pending = 0;
 				Aeron_LogInfo("aeron.xr", "system recentre: view offset cleared");
 			}
@@ -926,13 +933,94 @@ int Aeron_XrFrameBegun(void) { return g_xr.frame_begun; }
 
 int Aeron_XrShouldRender(void) { return g_xr.frame_begun && g_xr.should_render; }
 
-/* Replace local_space by LOCAL offset by `pose`. */
-static int Aeron_XrSetLocalPose(const XrPosef* pose) {
+static XrVector3f Aeron_XrRotate(XrQuaternionf q, XrVector3f v) {
+	const float tx = 2.0f * (q.y * v.z - q.z * v.y), ty = 2.0f * (q.z * v.x - q.x * v.z),
+				tz = 2.0f * (q.x * v.y - q.y * v.x);
+	XrVector3f r;
+	r.x = v.x + q.w * tx + (q.y * tz - q.z * ty);
+	r.y = v.y + q.w * ty + (q.z * tx - q.x * tz);
+	r.z = v.z + q.w * tz + (q.x * ty - q.y * tx);
+	return r;
+}
+
+/* a * b: b's pose expressed in the space a is in. */
+static XrPosef Aeron_XrPoseCompose(XrPosef a, XrPosef b) {
+	const XrQuaternionf p = a.orientation, q = b.orientation;
+	const XrVector3f    t = Aeron_XrRotate(p, b.position);
+	XrPosef             r;
+	r.position.x    = a.position.x + t.x;
+	r.position.y    = a.position.y + t.y;
+	r.position.z    = a.position.z + t.z;
+	r.orientation.w = p.w * q.w - p.x * q.x - p.y * q.y - p.z * q.z;
+	r.orientation.x = p.w * q.x + p.x * q.w + p.y * q.z - p.z * q.y;
+	r.orientation.y = p.w * q.y - p.x * q.z + p.y * q.w + p.z * q.x;
+	r.orientation.z = p.w * q.z + p.x * q.y - p.y * q.x + p.z * q.w;
+	return r;
+}
+
+static XrPosef Aeron_XrPoseInverse(XrPosef a) {
+	XrPosef    r;
+	XrVector3f t;
+	r.orientation.w = a.orientation.w;
+	r.orientation.x = -a.orientation.x;
+	r.orientation.y = -a.orientation.y;
+	r.orientation.z = -a.orientation.z;
+	t               = Aeron_XrRotate(r.orientation, a.position);
+	r.position.x    = -t.x;
+	r.position.y    = -t.y;
+	r.position.z    = -t.z;
+	return r;
+}
+
+static XrSpace Aeron_XrCreateLocal(const XrPosef* pose) {
 	XrReferenceSpaceCreateInfo info = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO, NULL };
 	XrSpace                    space = XR_NULL_HANDLE;
 	info.referenceSpaceType          = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	info.poseInReferenceSpace        = *pose;
 	if (XR_FAILED(g_xr.xrCreateReferenceSpace(g_xr.session, &info, &space))) {
+		return XR_NULL_HANDLE;
+	}
+	return space;
+}
+
+/* Replace local_space by LOCAL offset by `pose`, LOCAL being where it was at
+ * the start. A runtime may put each new LOCAL space somewhere else (the
+ * Steam Frame at the head's current heading): where a fresh one lands is
+ * checked against the start's, and the offset is corrected for it. */
+static int Aeron_XrSetLocalPose(const XrPosef* pose, XrTime time) {
+	XrPosef identity;
+	XrPosef want = *pose;
+	XrSpace space;
+	SDL_zero(identity);
+	identity.orientation.w = 1.0f;
+	if (g_xr.base_space && time > 0) {
+		XrSpace fresh = Aeron_XrCreateLocal(&identity);
+		if (fresh) {
+			XrSpaceLocation where = { XR_TYPE_SPACE_LOCATION, NULL };
+			if (XR_SUCCEEDED(g_xr.xrLocateSpace(fresh, g_xr.base_space, time, &where)) &&
+				(where.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+				(where.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+				const XrPosef h = where.pose;
+				const float   moved = h.position.x * h.position.x + h.position.y * h.position.y +
+									h.position.z * h.position.z;
+				if (moved > 1.0e-4f || SDL_fabsf(h.orientation.w) < 0.99996f) {
+					static int logged;
+					if (!logged) {
+						logged = 1;
+						Aeron_LogInfo("aeron.xr",
+									  "a new LOCAL space lands %.2f %.2f %.2f m / %.0f deg from the first; corrected",
+									  (double)h.position.x, (double)h.position.y, (double)h.position.z,
+									  (double)(2.0f * SDL_acosf(SDL_min(1.0f, SDL_fabsf(h.orientation.w))) *
+											   57.29578f));
+					}
+					want = Aeron_XrPoseCompose(Aeron_XrPoseInverse(h), *pose);
+				}
+			}
+			g_xr.xrDestroySpace(fresh);
+		}
+	}
+	space = Aeron_XrCreateLocal(&want);
+	if (!space) {
 		return 0;
 	}
 	if (g_xr.local_space) {
@@ -985,7 +1073,7 @@ static int Aeron_XrRecenterNow(XrTime time) {
 	pose.orientation.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
 	pose.orientation.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
 	pose.orientation.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
-	if (!Aeron_XrSetLocalPose(&pose)) {
+	if (!Aeron_XrSetLocalPose(&pose, time)) {
 		return 0;
 	}
 	Aeron_LogInfo("aeron.xr", "view recentred (turned %.0f deg, moved %.2f %.2f %.2f m)",
