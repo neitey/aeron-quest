@@ -11,6 +11,7 @@
 #include "xr.h"
 
 #include "aeron/log.h"
+#include "aeron/scene/draw_list2d.h"
 #include "internal.h"
 
 #include <math.h>
@@ -183,6 +184,15 @@ typedef struct AeronXrStereo {
 	int                    beam_count;
 	AeronXrPanel           beams[AERON_XR_MAX_BEAMS];
 	XrCompositionLayerQuad beam_quads[AERON_XR_MAX_BEAMS];
+	/* Flattened presentation (Aeron_XrStereoFlatten): the quad layers are
+	 * drawn into the eye images here and only the projection layer is
+	 * submitted. The panels are then drawn into their intermediate targets
+	 * (never into their swapchains), which are sampled. */
+	int                flatten;
+	int                flatten_failed;
+	AeronDrawList2D*   flat_lists[AERON_XR_EYE_COUNT];
+	AeronRenderTarget* flat_hands[AERON_XR_EYE_COUNT]; /* the eyes' hand box, copied before the panels */
+	AeronTexture       flat_screen[2];                 /* the virtual screen textures, wrapped */
 } AeronXrStereo;
 
 static AeronXrStereo g_st;
@@ -269,6 +279,15 @@ int Aeron_XrStereoInit(void) {
 		return 0;
 	}
 
+	{
+		/* SteamVR on the Steam Frame draws quad layers over the projection
+		 * whatever their order, and does not show a quad's image in step with
+		 * the projection: what moves on a panel (target brackets, map dots)
+		 * jitters. There the panels are drawn into the eye images instead.
+		 * AERON_XR_FLATTEN=1 / 0 forces it on / off. */
+		const char* flat = SDL_getenv("AERON_XR_FLATTEN");
+		g_st.flatten     = flat && flat[0] ? flat[0] != '0' : g_xr.quads_over_projection;
+	}
 	for (i = 0; i < AERON_XR_STEREO_SLOTS; ++i) {
 		static const char*    names[AERON_XR_STEREO_SLOTS] = { "aeron.xr.eye_left", "aeron.xr.eye_right",
 															   "aeron.xr.hud",      "aeron.xr.hud_world",
@@ -298,6 +317,10 @@ int Aeron_XrStereoInit(void) {
 														   : g_st.height;
 		g_st.chains[i].lazy   = i == AERON_XR_SLOT_CONSOLE || card || frame;
 		info.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+		if (g_st.flatten && i < AERON_XR_EYE_COUNT) {
+			/* The hands' box is copied out of the eye images. */
+			info.usageFlags |= XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+		}
 		if (g_xr.capture_frame_count > 0) {
 			/* Lets AERON_XR_CAPTURE read images rendered in place. */
 			info.usageFlags |= XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
@@ -354,6 +377,24 @@ int Aeron_XrStereoInit(void) {
 			return 0;
 		}
 	}
+	if (g_st.flatten) {
+		for (i = 0; i < AERON_XR_EYE_COUNT && g_st.flatten; ++i) {
+			g_st.flat_lists[i] = AeronDrawList_Create(512);
+			g_st.flat_hands[i] = Aeron_CreateRenderTarget(&(AeronRenderTargetDesc) {
+				.width      = g_st.width,
+				.height     = g_st.height,
+				.format     = g_st.format,
+				.debug_name = i ? "aeron.xr.flat_hands_right" : "aeron.xr.flat_hands_left",
+			});
+			if (!g_st.flat_lists[i] || !g_st.flat_hands[i]) {
+				Aeron_LogWarn("aeron.xr", "flattened presentation unavailable; panels stay quad layers");
+				g_st.flatten = 0;
+			}
+		}
+		if (g_st.flatten) {
+			Aeron_LogInfo("aeron.xr", "flattened presentation: the panels are drawn into the eye images");
+		}
+	}
 	g_st.ready  = 1;
 	g_st.direct = 1;
 	for (i = 0; i < AERON_XR_STEREO_SLOTS; ++i) {
@@ -375,6 +416,14 @@ int Aeron_XrStereoInit(void) {
 
 void Aeron_XrStereoShutdown(void) {
 	int i;
+	for (i = 0; i < AERON_XR_EYE_COUNT; ++i) {
+		if (g_st.flat_lists[i]) {
+			AeronDrawList_Destroy(g_st.flat_lists[i]);
+		}
+		if (g_st.flat_hands[i]) {
+			Aeron_DestroyRenderTarget(g_st.flat_hands[i]);
+		}
+	}
 	for (i = 0; i < AERON_XR_STEREO_SLOTS; ++i) {
 		if (g_st.chains[i].target) {
 			Aeron_DestroyRenderTarget(g_st.chains[i].target);
@@ -457,6 +506,10 @@ int Aeron_XrStereoBegin(AeronXrStereoFrame* out) {
 		for (int slot = 0; slot < AERON_XR_STEREO_SLOTS; ++slot) {
 			AeronXrStereoSwapchain* chain = &g_st.chains[slot];
 			if (chain->acquired || !chain->swapchain || chain->lazy) {
+				continue;
+			}
+			if (g_st.flatten && slot >= AERON_XR_EYE_COUNT) {
+				chain->released_once = 1; /* drawn into its target, which is sampled */
 				continue;
 			}
 			XrSwapchainImageAcquireInfo acquire_info = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, NULL };
@@ -607,7 +660,9 @@ AeronRenderTarget* Aeron_XrStereoPanelTarget(int which, int* width, int* height)
 		return NULL;
 	}
 	AeronXrStereoSwapchain* chain = &g_st.chains[slot];
-	if (g_st.direct && !chain->acquired) {
+	if (g_st.flatten) {
+		chain->released_once = 1;
+	} else if (g_st.direct && !chain->acquired) {
 		XrSwapchainImageAcquireInfo acquire_info = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, NULL };
 		XrSwapchainImageWaitInfo    wait_info    = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, NULL };
 		uint32_t                    index        = 0;
@@ -665,7 +720,7 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) {
 }
 
 void Aeron_XrStereoCommitEyeOverlay(void) {
-	g_st.eye_overlay = g_st.committed && !g_xr.quads_over_projection;
+	g_st.eye_overlay = g_st.committed && (g_st.flatten || !g_xr.quads_over_projection);
 	memset(g_st.overlay_rect, 0, sizeof g_st.overlay_rect);
 }
 
@@ -768,7 +823,7 @@ int Aeron_XrStereoCopyToSwapchains(SDL_GPUCommandBuffer* command_buffer) {
 		SDL_GPUBlitInfo             blit;
 		uint32_t                    index = 0;
 		XrResult                    result;
-		if (!Aeron_XrStereoSlotVisible(slot)) {
+		if (!Aeron_XrStereoSlotVisible(slot) || (g_st.flatten && slot >= AERON_XR_EYE_COUNT)) {
 			continue;
 		}
 		if (chain->acquired) {
@@ -919,15 +974,8 @@ static void Aeron_XrFillQuad(XrCompositionLayerQuad* quad, int slot, const Aeron
 	quad->size.height = hud->size[1];
 }
 
-/* Releases acquired images and appends this frame's layers. Returns the
- * number of layers written (0 when the frame was not stereo). */
-uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity,
-									  const XrCompositionLayerBaseHeader* const* screens, int screen_count) {
-	uint32_t count = 0;
-	int      slot;
-	int      eyes_ok = 1;
-
-	for (slot = 0; slot < AERON_XR_STEREO_SLOTS; ++slot) {
+static void Aeron_XrStereoReleaseImages(void) {
+	for (int slot = 0; slot < AERON_XR_STEREO_SLOTS; ++slot) {
 		AeronXrStereoSwapchain* chain = &g_st.chains[slot];
 		if (chain->acquired && chain->swapchain) {
 			XrSwapchainImageReleaseInfo release = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, NULL };
@@ -939,6 +987,50 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 			chain->direct_frame = 0;
 		}
 	}
+}
+
+static uint32_t Aeron_XrStereoBuildLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity,
+										  const XrCompositionLayerBaseHeader* const* screens, int screen_count);
+static int      Aeron_XrStereoFlatten(const XrCompositionLayerBaseHeader* const* layers, uint32_t count);
+
+/* Releases acquired images and appends this frame's layers. Returns the
+ * number of layers written (0 when the frame was not stereo). */
+uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity,
+									  const XrCompositionLayerBaseHeader* const* screens, int screen_count) {
+	if (g_st.flatten && capacity > 0) {
+		/* Everything is built (no budget: it is drawn here), drawn into the
+		 * eye images while they are still acquired, then released. */
+		const XrCompositionLayerBaseHeader* all[AERON_XR_MAX_LAYERS];
+		const uint32_t count = Aeron_XrStereoBuildLayers(all, AERON_XR_MAX_LAYERS, screens, screen_count);
+		const char*    dump  = SDL_getenv("AERON_XR_FLATTEN_DUMP");
+		const int      flat  = count > 1 || (count == 1 && dump && dump[0]) ? Aeron_XrStereoFlatten(all, count) : 1;
+		{
+			static int logged;
+			if (!logged && count > 1) {
+				logged = 1;
+				Aeron_LogInfo("aeron.xr", "flattened %u layers into the eyes: %s", count - 1, flat ? "ok" : "failed");
+			}
+		}
+		Aeron_XrStereoReleaseImages();
+		if (count == 0) {
+			return 0;
+		}
+		layers[0] = all[0];
+		if (!flat && !g_st.flatten_failed) {
+			g_st.flatten_failed = 1;
+			Aeron_LogWarn("aeron.xr", "flattening the panels failed; showing the 3D view alone this frame");
+		}
+		return 1;
+	}
+	Aeron_XrStereoReleaseImages();
+	return Aeron_XrStereoBuildLayers(layers, capacity, screens, screen_count);
+}
+
+static uint32_t Aeron_XrStereoBuildLayers(const XrCompositionLayerBaseHeader** layers, uint32_t capacity,
+										  const XrCompositionLayerBaseHeader* const* screens, int screen_count) {
+	uint32_t count   = 0;
+	int      eyes_ok = 1;
+
 	if (!Aeron_XrStereoCommitted()) {
 		g_st.committed      = 0;
 		g_st.screen_overlay = 0;
@@ -1172,6 +1264,274 @@ uint32_t Aeron_XrStereoEndFrameLayers(const XrCompositionLayerBaseHeader** layer
 		g_st.follow_valid = 0; /* next appearance starts in place, no swoop */
 	}
 	return count;
+}
+
+/* ---- Flattened presentation -------------------------------------------- */
+
+static AeronTexture* Aeron_XrStereoLayerTexture(XrSwapchain swapchain, int* width, int* height) {
+	for (int slot = AERON_XR_EYE_COUNT; slot < AERON_XR_STEREO_SLOTS; ++slot) {
+		if (g_st.chains[slot].swapchain && g_st.chains[slot].swapchain == swapchain && g_st.chains[slot].target) {
+			*width  = g_st.chains[slot].width;
+			*height = g_st.chains[slot].height;
+			return Aeron_RenderTargetGetTexture(g_st.chains[slot].target);
+		}
+	}
+	for (int k = 0; k < 2; ++k) {
+		const XrSwapchain sc  = k ? g_xr.screen_right_swapchain : g_xr.screen_swapchain;
+		SDL_GPUTexture*   tex = k ? g_xr.screen_right_texture : g_xr.screen_texture;
+		if (sc && sc == swapchain && tex) {
+			AeronTexture* t = &g_st.flat_screen[k];
+			t->texture      = tex;
+			t->width        = g_xr.screen_width;
+			t->height       = g_xr.screen_height;
+			t->mip_count    = 1;
+			t->layer_count  = 1;
+			t->format       = Aeron_FromSdlTextureFormat(g_xr.screen_format);
+			t->usage        = AERON_TEXTURE_USAGE_SAMPLED | AERON_TEXTURE_USAGE_COLOR_TARGET;
+			t->sample_count = AERON_SAMPLE_COUNT_1;
+			t->owned        = 0;
+			*width          = g_xr.screen_width;
+			*height         = g_xr.screen_height;
+			return t;
+		}
+	}
+	return NULL;
+}
+
+/* A point of the quad (sx, sy in -0.5..0.5, +y up) in the eye's image:
+ * pixels and the depth in front of the eye (the clip w). */
+static float Aeron_XrFlatProject(const XrCompositionLayerQuad* quad, const XrView* view, float sx, float sy,
+								 const float tan_fov[4], float out_px[2]) {
+	const XrVector3f local = { sx * quad->size.width, sy * quad->size.height, 0.0f };
+	XrVector3f       p     = Aeron_XrQuatRotate(quad->pose.orientation, local);
+	p.x += quad->pose.position.x - view->pose.position.x;
+	p.y += quad->pose.position.y - view->pose.position.y;
+	p.z += quad->pose.position.z - view->pose.position.z;
+	const XrQuaternionf inv = { -view->pose.orientation.x, -view->pose.orientation.y, -view->pose.orientation.z,
+								view->pose.orientation.w };
+	const XrVector3f    e   = Aeron_XrQuatRotate(inv, p);
+	const float         d   = -e.z;
+	if (d > 1.0e-4f) {
+		const float tx = e.x / d, ty = e.y / d;
+		out_px[0] = (tx - tan_fov[0]) / (tan_fov[1] - tan_fov[0]) * (float)g_st.width;
+		out_px[1] = (tan_fov[2] - ty) / (tan_fov[2] - tan_fov[3]) * (float)g_st.height;
+	}
+	return d;
+}
+
+/* One quad layer into an eye's draw list: one projective quad, or a grid
+ * of them when part of it is behind the eye (those cells are left out). */
+static void Aeron_XrFlatQuad(AeronDrawList2D* list, int eye, const XrCompositionLayerQuad* quad) {
+	int           tw = 0, th = 0;
+	AeronTexture* tex = Aeron_XrStereoLayerTexture(quad->subImage.swapchain, &tw, &th);
+	const XrView* view = &g_st.views[eye];
+	if (!tex || tw <= 0 || th <= 0 || quad->size.width <= 0.0f || quad->size.height <= 0.0f) {
+		return;
+	}
+	if ((eye == 0 && quad->eyeVisibility == XR_EYE_VISIBILITY_RIGHT) ||
+		(eye == 1 && quad->eyeVisibility == XR_EYE_VISIBILITY_LEFT)) {
+		return;
+	}
+	const float tan_fov[4] = { tanf(view->fov.angleLeft), tanf(view->fov.angleRight), tanf(view->fov.angleUp),
+							   tanf(view->fov.angleDown) };
+	const float u0 = (float)quad->subImage.imageRect.offset.x / (float)tw;
+	const float v0 = (float)quad->subImage.imageRect.offset.y / (float)th;
+	const float u1 = (float)(quad->subImage.imageRect.offset.x + quad->subImage.imageRect.extent.width) / (float)tw;
+	const float v1 = (float)(quad->subImage.imageRect.offset.y + quad->subImage.imageRect.extent.height) / (float)th;
+	const float near_m = 0.02f;
+	int         cells  = 1;
+	{
+		static const float corner[4][2] = { { -0.5f, 0.5f }, { 0.5f, 0.5f }, { -0.5f, -0.5f }, { 0.5f, -0.5f } };
+		int                behind       = 0;
+		float              px[2];
+		for (int k = 0; k < 4; ++k) {
+			behind += Aeron_XrFlatProject(quad, view, corner[k][0], corner[k][1], tan_fov, px) < near_m;
+		}
+		if (behind == 4) {
+			return;
+		}
+		if (behind) {
+			cells = 8;
+		}
+	}
+	const int blend = (quad->layerFlags & XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT)
+						  ? ((quad->layerFlags & XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT)
+								 ? AERON_BLIT2D_BLEND_STRAIGHT
+								 : AERON_BLIT2D_BLEND_PMA)
+						  : AERON_BLIT2D_BLEND_NONE;
+	for (int cy = 0; cy < cells; ++cy) {
+		for (int cx = 0; cx < cells; ++cx) {
+			AeronDrawList2DQuad4 q;
+			int                  ok = 1;
+			memset(&q, 0, sizeof q);
+			/* TL, TR, BL, BR: image top = quad top (+y). */
+			for (int k = 0; k < 4 && ok; ++k) {
+				const float fx = (float)(cx + (k & 1)) / (float)cells;
+				const float fy = (float)(cy + (k >> 1)) / (float)cells;
+				float       px[2];
+				const float d = Aeron_XrFlatProject(quad, view, fx - 0.5f, 0.5f - fy, tan_fov, px);
+				if (d < near_m) {
+					ok = 0;
+					break;
+				}
+				q.corners[k][0] = px[0];
+				q.corners[k][1] = px[1];
+				q.corners[k][2] = u0 + (u1 - u0) * fx;
+				q.corners[k][3] = v0 + (v1 - v0) * fy;
+				q.q[k]          = d;
+			}
+			if (!ok) {
+				continue;
+			}
+			q.texture = tex;
+			q.tint[0] = q.tint[1] = q.tint[2] = q.tint[3] = 1.0f;
+			q.blend   = (AeronBlit2DBlend)blend;
+			q.filter  = AERON_BLIT2D_FILTER_LINEAR;
+			AeronDrawList_AddQuad4(list, &q);
+		}
+	}
+}
+
+/* Draws this frame's quad layers (layers[1..]) into both eye images, in
+ * submission order; the hands' overlay (the eye images again, by their
+ * alpha) comes from a copy of the hands' box taken before the panels. */
+static int Aeron_XrStereoFlatten(const XrCompositionLayerBaseHeader* const* layers, uint32_t count) {
+	int hands = 0;
+	for (int eye = 0; eye < AERON_XR_EYE_COUNT; ++eye) {
+		const AeronXrStereoSwapchain* chain = &g_st.chains[eye];
+		if (!chain->acquired || !chain->waited || chain->index >= chain->image_count || !chain->image_targets) {
+			return 0;
+		}
+	}
+	for (uint32_t i = 1; i < count; ++i) {
+		hands |= layers[i] == (const XrCompositionLayerBaseHeader*)&g_st.projection_overlay;
+	}
+	AeronCommandBuffer* cmd = Aeron_AcquireCommandBuffer();
+	if (!cmd) {
+		return 0;
+	}
+	int rects[AERON_XR_EYE_COUNT][4];
+	for (int eye = 0; eye < AERON_XR_EYE_COUNT; ++eye) {
+		const int* r = g_st.overlay_rect[eye];
+		if (r[2] > 0 && r[3] > 0) {
+			memcpy(rects[eye], r, sizeof rects[eye]);
+		} else {
+			rects[eye][0] = rects[eye][1] = 0;
+			rects[eye][2]                 = g_st.width;
+			rects[eye][3]                 = g_st.height;
+		}
+	}
+	if (hands) {
+		SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd->command_buffer);
+		if (!copy) {
+			Aeron_CancelCommandBuffer(cmd);
+			return 0;
+		}
+		for (int eye = 0; eye < AERON_XR_EYE_COUNT; ++eye) {
+			const AeronXrStereoSwapchain* chain = &g_st.chains[eye];
+			SDL_GPUTextureLocation        src, dst;
+			SDL_zero(src);
+			SDL_zero(dst);
+			src.texture = chain->images[chain->index];
+			src.x       = (Uint32)rects[eye][0];
+			src.y       = (Uint32)rects[eye][1];
+			dst.texture = Aeron_RenderTargetGetTexture(g_st.flat_hands[eye])->texture;
+			dst.x       = src.x;
+			dst.y       = src.y;
+			SDL_CopyGPUTextureToTexture(copy, &src, &dst, (Uint32)rects[eye][2], (Uint32)rects[eye][3], 1, false);
+		}
+		SDL_EndGPUCopyPass(copy);
+	}
+	for (int eye = 0; eye < AERON_XR_EYE_COUNT; ++eye) {
+		AeronXrStereoSwapchain* chain = &g_st.chains[eye];
+		AeronDrawList2D*        list  = g_st.flat_lists[eye];
+		AeronDrawList_Begin(list, &chain->image_targets[chain->index], g_st.width, g_st.height,
+							AERON_DRAWLIST2D_LOAD, NULL);
+		for (uint32_t i = 1; i < count; ++i) {
+			const XrCompositionLayerBaseHeader* layer = layers[i];
+			if (layer == (const XrCompositionLayerBaseHeader*)&g_st.projection_overlay) {
+				AeronDrawList2DSprite sprite;
+				memset(&sprite, 0, sizeof sprite);
+				sprite.texture = Aeron_RenderTargetGetTexture(g_st.flat_hands[eye]);
+				sprite.src_u0  = (float)rects[eye][0] / (float)g_st.width;
+				sprite.src_v0  = (float)rects[eye][1] / (float)g_st.height;
+				sprite.src_u1  = (float)(rects[eye][0] + rects[eye][2]) / (float)g_st.width;
+				sprite.src_v1  = (float)(rects[eye][1] + rects[eye][3]) / (float)g_st.height;
+				sprite.dst_x   = (float)rects[eye][0];
+				sprite.dst_y   = (float)rects[eye][1];
+				sprite.dst_w   = (float)rects[eye][2];
+				sprite.dst_h   = (float)rects[eye][3];
+				sprite.tint[0] = sprite.tint[1] = sprite.tint[2] = sprite.tint[3] = 1.0f;
+				sprite.blend   = AERON_BLIT2D_BLEND_STRAIGHT;
+				sprite.filter  = AERON_BLIT2D_FILTER_NEAREST;
+				AeronDrawList_AddSprite(list, &sprite);
+			} else if (layer->type == XR_TYPE_COMPOSITION_LAYER_QUAD) {
+				Aeron_XrFlatQuad(list, eye, (const XrCompositionLayerQuad*)layer);
+			}
+		}
+		AeronDrawList_Render(list, cmd);
+	}
+	{
+		/* AERON_XR_FLATTEN_DUMP=<folder>: the flattened left eye as a BMP
+		 * every 300 frames (AERON_XR_FLATTEN_DUMP_EVERY), for checking the
+		 * composition off the headset. */
+		const char* dump = SDL_getenv("AERON_XR_FLATTEN_DUMP");
+		const char* every = SDL_getenv("AERON_XR_FLATTEN_DUMP_EVERY");
+		const int   n     = every && SDL_atoi(every) > 0 ? SDL_atoi(every) : 300;
+		if (dump && dump[0] && g_xr.frame_index % (uint64_t)n == 0) {
+			const AeronXrStereoSwapchain*      chain = &g_st.chains[0];
+			SDL_GPUTransferBufferCreateInfo    tbi;
+			SDL_zero(tbi);
+			tbi.usage                   = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+			tbi.size                    = (Uint32)(g_st.width * g_st.height * 4);
+			SDL_GPUTransferBuffer* tb   = SDL_CreateGPUTransferBuffer(g_xr.device, &tbi);
+			SDL_GPUCopyPass*       copy = tb ? SDL_BeginGPUCopyPass(cmd->command_buffer) : NULL;
+			if (copy) {
+				SDL_GPUTextureRegion         region;
+				SDL_GPUTextureTransferInfo   dst;
+				SDL_zero(region);
+				SDL_zero(dst);
+				region.texture     = chain->images[chain->index];
+				region.w           = (Uint32)g_st.width;
+				region.h           = (Uint32)g_st.height;
+				region.d           = 1;
+				dst.transfer_buffer = tb;
+				SDL_DownloadFromGPUTexture(copy, &region, &dst);
+				SDL_EndGPUCopyPass(copy);
+				AeronGpuFence* fence = Aeron_SubmitCommandBufferAndAcquireFence(cmd);
+				if (fence && Aeron_WaitForGpuFence(fence)) {
+					void* pixels = SDL_MapGPUTransferBuffer(g_xr.device, tb, false);
+					if (pixels) {
+						SDL_Surface* surface = SDL_CreateSurfaceFrom(g_st.width, g_st.height,
+																	 g_xr.screen_format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB
+																		 ? SDL_PIXELFORMAT_ARGB8888
+																		 : SDL_PIXELFORMAT_ABGR8888,
+																	 pixels, g_st.width * 4);
+						char path[512];
+						SDL_snprintf(path, sizeof path, "%s/flat_%06llu.bmp", dump,
+									 (unsigned long long)g_xr.frame_index);
+						if (surface && SDL_SaveBMP(surface, path)) {
+							Aeron_LogInfo("aeron.xr", "flattened eye saved to %s", path);
+						} else {
+							Aeron_LogWarn("aeron.xr", "flattened eye not saved: %s", SDL_GetError());
+						}
+						SDL_DestroySurface(surface);
+						SDL_UnmapGPUTransferBuffer(g_xr.device, tb);
+					}
+				}
+				if (fence) {
+					Aeron_ReleaseGpuFence(fence);
+				}
+				SDL_ReleaseGPUTransferBuffer(g_xr.device, tb);
+				return fence != NULL;
+			}
+			Aeron_LogWarn("aeron.xr", "flattened eye dump: no copy pass: %s", SDL_GetError());
+			if (tb) {
+				SDL_ReleaseGPUTransferBuffer(g_xr.device, tb);
+			}
+		}
+	}
+	return Aeron_SubmitCommandBuffer(cmd) ? 1 : 0;
 }
 
 #endif /* AERON_HAS_OPENXR */

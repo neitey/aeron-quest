@@ -35,6 +35,9 @@ typedef enum {
 	 * building a layer's alpha mask after its colour is drawn. */
 	AERON_BLIT2D_BLEND_ALPHA_SET  = 3,
 	AERON_BLIT2D_BLEND_ALPHA_OVER = 4,
+	/* Straight (not premultiplied) alpha over: dst = src.rgb * src.a +
+	 * dst.rgb * (1 - src.a), e.g. an image whose alpha is a mask. */
+	AERON_BLIT2D_BLEND_STRAIGHT = 5,
 } AeronBlit2DBlend;
 
 typedef enum {
