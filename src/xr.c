@@ -358,10 +358,23 @@ static void Aeron_XrApplyRefreshRate(void) {
 	if (XR_FAILED(g_xr.xrEnumerateDisplayRefreshRatesFB(g_xr.session, 16, &count, rates)) || count == 0) {
 		return;
 	}
+	{
+		char   list[160];
+		size_t len = 0;
+		list[0]    = 0;
+		for (uint32_t i = 0; i < count && len + 8 < sizeof list; ++i) {
+			len += (size_t)SDL_snprintf(list + len, sizeof list - len, "%s%.0f", i ? " " : "", (double)rates[i]);
+		}
+		Aeron_LogInfo("aeron.xr", "display refresh rates offered: %s Hz (wanted %.0f)", list, (double)want);
+	}
 	for (uint32_t i = 0; i < count; ++i) {
 		if (best == 0.0f || SDL_fabsf(rates[i] - want) < SDL_fabsf(best - want)) {
 			best = rates[i];
 		}
+	}
+	if (SDL_fabsf(best - want) > 0.5f) {
+		Aeron_LogWarn("aeron.xr", "the headset does not offer %.0f Hz here (SteamVR: set the rate in its own "
+								  "settings); using %.0f Hz", (double)want, (double)best);
 	}
 	Aeron_LogInfo("aeron.xr", "display refresh %.0f Hz requested: %s", best,
 				  Aeron_XrResultName(g_xr.xrRequestDisplayRefreshRateFB(g_xr.session, best)));
