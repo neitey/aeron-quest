@@ -105,18 +105,42 @@ typedef enum AeronXrButton {
 	AERON_XR_BUTTON_LEFT_STICK,  /* left thumbstick click */
 	AERON_XR_BUTTON_RIGHT_STICK, /* right thumbstick click */
 	AERON_XR_BUTTON_RIGHT_GRIP,
+	AERON_XR_BUTTON_RIGHT_TRIGGER,
+	AERON_XR_BUTTON_LEFT_GRIP,
+	/* Steam Frame controllers only: the left d-pad and the two bumpers
+	 * (shoulder buttons above the triggers). Physical controls: left-handed
+	 * controls do not move them to the other controller (it has none). */
+	AERON_XR_BUTTON_DPAD_UP,
+	AERON_XR_BUTTON_DPAD_DOWN,
+	AERON_XR_BUTTON_DPAD_LEFT,
+	AERON_XR_BUTTON_DPAD_RIGHT,
+	AERON_XR_BUTTON_BUMPER_LEFT,
+	AERON_XR_BUTTON_BUMPER_RIGHT,
 	AERON_XR_BUTTON_COUNT
 } AeronXrButton;
 
 /* Flight buttons: while enabled, presses of the buttons above are queued
  * for Aeron_XrPollButton instead of being reported on the virtual gamepad
- * (the right trigger, right stick, left stick, throttle lever and right grip
- * stay on the gamepad). The left grip is left to the game (Aeron_XrGetHand).
- * `shifted` is always 0 (there is no shift layer). Disabled by default. */
+ * (the sticks and the throttle lever stay on the gamepad, and so does fire,
+ * see Aeron_XrSetFireButtons). A trigger or grip a game UI owns
+ * (Aeron_XrCaptureTrigger / Aeron_XrCaptureGrip) is not pressed.
+ * `shifted` is always 0 (a game's own layers use Aeron_XrFlightButtonsHeld).
+ * Disabled by default. */
 void Aeron_XrSetFlightButtons(int enabled);
 /* Pops the oldest queued flight-button press. Returns 0 when none is
  * queued. */
 int Aeron_XrPollButton(AeronXrButton* button, int* shifted);
+/* The flight buttons held now, one bit per AeronXrButton (1u << button);
+ * game-side roles (left-handed controls applied), owned triggers and grips
+ * left out. Tracked while flight buttons are off too. */
+uint32_t Aeron_XrFlightButtonsHeld(void);
+/* While flight buttons are on: the buttons (1u << AeronXrButton) whose hold
+ * is the virtual gamepad's fire button (the right trigger reported as the
+ * gamepad's south button). Default: the right trigger alone; 0 = none. */
+void Aeron_XrSetFireButtons(uint32_t buttons);
+/* The Steam Frame's controllers are in use (their d-pad and bumpers are
+ * there); AERON_XR_FRAME_CONTROLS=1 / 0 overrides it (tests). */
+int Aeron_XrFrameControls(void);
 /* Left-handed controls (AERON_XR_LEFT_HANDED=1, read every frame): the
  * two controllers trade their game roles - thumbsticks, triggers, grips,
  * stick clicks, A/B with X/Y - so AERON_XR_BUTTON_A and the virtual
@@ -166,6 +190,12 @@ typedef struct AeronXrHand {
 #define AERON_XR_HAND_BUTTON_STICK 4u     /* thumbstick click */
 #define AERON_XR_HAND_BUTTON_MENU 8u      /* the left menu button */
 #define AERON_XR_HAND_BUTTON_THUMBREST 16u /* thumb on the thumb rest */
+/* Steam Frame controllers: the bumper above the trigger, the left d-pad. */
+#define AERON_XR_HAND_BUTTON_BUMPER 32u
+#define AERON_XR_HAND_BUTTON_DPAD_UP 64u
+#define AERON_XR_HAND_BUTTON_DPAD_DOWN 128u
+#define AERON_XR_HAND_BUTTON_DPAD_LEFT 256u
+#define AERON_XR_HAND_BUTTON_DPAD_RIGHT 512u
 /* Fills `out` for hand 0 (left) or 1 (right) at this frame's predicted
  * display time. Returns out->valid. */
 int Aeron_XrGetHand(int hand, AeronXrHand* out);

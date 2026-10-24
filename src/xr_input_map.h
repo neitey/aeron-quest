@@ -61,6 +61,10 @@ typedef struct AeronXrTouchState {
 	int   left_stick_click;
 	int   right_stick_click;
 	int   menu;
+	/* Steam Frame: the left d-pad and the bumpers (physical, never mirrored
+	 * for left-handed play). */
+	int   dpad_up, dpad_down, dpad_left, dpad_right;
+	int   left_bumper, right_bumper;
 	float extra_roll;     /* roll from elsewhere (virtual stick twist), -1..1 */
 } AeronXrTouchState;
 

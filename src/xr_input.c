@@ -30,6 +30,8 @@
 #include <string.h>
 
 static int g_xr_pointer_enabled = 1;
+/* A hand reports the Steam Frame's profile (or pressed its d-pad / a bumper). */
+static int g_xr_frame_controls;
 static int g_xr_menu_keys       = 0;
 static int g_xr_flight_buttons  = 0;
 /* Triggers owned by a game UI (Aeron_XrCaptureTrigger), and pulls that
@@ -85,6 +87,13 @@ typedef struct AeronXrButtonPress {
 static AeronXrButtonPress g_xr_button_queue[AERON_XR_BUTTON_QUEUE];
 static int                g_xr_button_head;
 static int                g_xr_button_count;
+/* Flight buttons held now (1u << AeronXrButton), and the ones that fire. */
+static uint32_t g_xr_buttons_held;
+static uint32_t g_xr_fire_buttons = 1u << AERON_XR_BUTTON_RIGHT_TRIGGER;
+
+uint32_t Aeron_XrFlightButtonsHeld(void) { return g_xr_buttons_held; }
+
+void Aeron_XrSetFireButtons(uint32_t buttons) { g_xr_fire_buttons = buttons; }
 
 void Aeron_XrSetPointerEnabled(int enabled) { g_xr_pointer_enabled = enabled != 0; }
 
@@ -230,6 +239,11 @@ int Aeron_XrGetHand(int hand, AeronXrHand* out) {
 	return 0;
 }
 
+int Aeron_XrFrameControls(void) {
+	const char* force = SDL_getenv("AERON_XR_FRAME_CONTROLS");
+	return force && force[0] ? force[0] == '1' : g_xr_frame_controls;
+}
+
 int Aeron_XrThumbrestTouch(int hand) {
 	(void)hand;
 	return -1;
@@ -262,6 +276,8 @@ typedef struct AeronXrInput {
 	/* Capacitive touch (Touch controllers): index finger on the trigger,
 	 * thumb on any thumb surface. For the VR hands' poses. */
 	XrAction    trigger_touch, thumb_touch, thumbrest_touch;
+	/* Steam Frame: the left d-pad and a bumper on each controller. */
+	XrAction    dpad_up, dpad_down, dpad_left, dpad_right, bumper;
 	int         touch_bound;
 	XrSpace     aim_space[AERON_XR_HAND_COUNT];
 	XrSpace     grip_space[AERON_XR_HAND_COUNT];
@@ -381,6 +397,13 @@ int Aeron_XrInputInit(void) {
 	g_in.thumb_touch   = Aeron_XrCreateAction("thumb_touch", "Thumb resting", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
 	g_in.thumbrest_touch =
 		Aeron_XrCreateAction("thumbrest_touch", "Thumb on the thumb rest", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
+	if (g_xr.has_valve_frame) {
+		g_in.dpad_up    = Aeron_XrCreateAction("dpad_up", "D-pad up", XR_ACTION_TYPE_BOOLEAN_INPUT, 0);
+		g_in.dpad_down  = Aeron_XrCreateAction("dpad_down", "D-pad down", XR_ACTION_TYPE_BOOLEAN_INPUT, 0);
+		g_in.dpad_left  = Aeron_XrCreateAction("dpad_left", "D-pad left", XR_ACTION_TYPE_BOOLEAN_INPUT, 0);
+		g_in.dpad_right = Aeron_XrCreateAction("dpad_right", "D-pad right", XR_ACTION_TYPE_BOOLEAN_INPUT, 0);
+		g_in.bumper     = Aeron_XrCreateAction("bumper", "Bumper", XR_ACTION_TYPE_BOOLEAN_INPUT, 1);
+	}
 	if (!g_in.stick || !g_in.trigger || !g_in.grip || !g_in.stick_click || !g_in.aim || !g_in.haptic ||
 		!g_in.a || !g_in.b || !g_in.x || !g_in.y || !g_in.menu || !g_in.grip_pose) {
 		return 0;
@@ -477,9 +500,9 @@ int Aeron_XrInputInit(void) {
 			 * and Menu on the right; a bumper above each trigger; no thumb
 			 * rest. Without this SteamVR maps Touch onto them: X and Y on
 			 * the d-pad's down / up, B on three buttons, nothing on the
-			 * bumpers. Here X / Y are on the right's X / Y as well as the
-			 * d-pad, Menu and View both open the menu, and the left bumper
-			 * stands in for the thumb rest (voice commands). */
+			 * bumpers. Here X / Y are on the right's X / Y, the d-pad and the
+			 * bumpers are buttons of their own (the d-pad's down / up are X /
+			 * Y in menus), and Menu and View both open the menu. */
 			XrActionSuggestedBinding frame[64];
 			uint32_t                 n = 0;
 			static const char* const hands[2] = { "left", "right" };
@@ -502,15 +525,16 @@ int Aeron_XrInputInit(void) {
 				AERON_XR_FRAME_BIND(g_in.trigger_touch, "input/trigger/touch", hands[hh]);
 				AERON_XR_FRAME_BIND(g_in.thumb_touch, "input/thumbstick/touch", hands[hh]);
 			}
-			/* Voice commands on the left bumper (the shoulder button above the
-			 * left trigger); the right bumper stays free. */
-			AERON_XR_FRAME_BIND(g_in.thumbrest_touch, "input/bumper/click", "left");
+			AERON_XR_FRAME_BIND(g_in.bumper, "input/bumper/click", "left");
+			AERON_XR_FRAME_BIND(g_in.bumper, "input/bumper/click", "right");
 			AERON_XR_FRAME_BIND(g_in.a, "input/a/click", "right");
 			AERON_XR_FRAME_BIND(g_in.b, "input/b/click", "right");
 			AERON_XR_FRAME_BIND(g_in.x, "input/x/click", "right");
 			AERON_XR_FRAME_BIND(g_in.y, "input/y/click", "right");
-			AERON_XR_FRAME_BIND(g_in.x, "input/dpad_down/click", "left");
-			AERON_XR_FRAME_BIND(g_in.y, "input/dpad_up/click", "left");
+			AERON_XR_FRAME_BIND(g_in.dpad_up, "input/dpad_up/click", "left");
+			AERON_XR_FRAME_BIND(g_in.dpad_down, "input/dpad_down/click", "left");
+			AERON_XR_FRAME_BIND(g_in.dpad_left, "input/dpad_left/click", "left");
+			AERON_XR_FRAME_BIND(g_in.dpad_right, "input/dpad_right/click", "left");
 			AERON_XR_FRAME_BIND(g_in.menu, "input/view/click", "left");
 			AERON_XR_FRAME_BIND(g_in.menu, "input/menu/click", "right");
 			{
@@ -630,11 +654,20 @@ int Aeron_XrInputInit(void) {
 	return 1;
 }
 
+int Aeron_XrFrameControls(void) {
+	const char* force = SDL_getenv("AERON_XR_FRAME_CONTROLS");
+	if (force && force[0]) {
+		return force[0] == '1';
+	}
+	return g_xr_frame_controls;
+}
+
 void Aeron_XrInputLogProfiles(void) {
 	static const char* const hand_name[AERON_XR_HAND_COUNT] = { "left", "right" };
 	if (!g_in.ready || !g_xr.xrGetCurrentInteractionProfile || !g_xr.xrPathToString) {
 		return;
 	}
+	g_xr_frame_controls = 0;
 	for (int h = 0; h < AERON_XR_HAND_COUNT; ++h) {
 		XrInteractionProfileState state = { XR_TYPE_INTERACTION_PROFILE_STATE, NULL };
 		char                      name[XR_MAX_PATH_LENGTH];
@@ -652,6 +685,9 @@ void Aeron_XrInputLogProfiles(void) {
 			SDL_strlcpy(name, "?", sizeof name);
 		}
 		Aeron_LogInfo("aeron.xr", "%s controller: %s", hand_name[h], name);
+		if (SDL_strstr(name, "frame_controller_valve")) {
+			g_xr_frame_controls = 1;
+		}
 	}
 }
 
@@ -837,6 +873,7 @@ static void Aeron_XrApplyMenuKeys(AeronInputSnapshot* input, const AeronXrTouchS
  * on mid-press does not produce a phantom press. */
 static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
 	uint8_t   now[AERON_XR_BUTTON_COUNT];
+	uint32_t  held;
 	int       b;
 
 	memset(now, 0, sizeof now);
@@ -851,20 +888,36 @@ static void Aeron_XrTrackFlightButtons(const AeronXrTouchState* touch) {
 		touch->left_trigger >= (g_in.button_prev[AERON_XR_BUTTON_LEFT_TRIGGER] ? 0.35f : 0.5f));
 	now[AERON_XR_BUTTON_RIGHT_GRIP]   = (uint8_t)(touch->active_right &&
 		touch->right_grip >= (g_in.button_prev[AERON_XR_BUTTON_RIGHT_GRIP] ? 0.35f : 0.5f));
+	now[AERON_XR_BUTTON_RIGHT_TRIGGER] = (uint8_t)(touch->active_right &&
+		touch->right_trigger >= (g_in.button_prev[AERON_XR_BUTTON_RIGHT_TRIGGER] ? 0.35f : 0.5f));
+	now[AERON_XR_BUTTON_LEFT_GRIP]    = (uint8_t)(touch->active_left &&
+		touch->left_grip >= (g_in.button_prev[AERON_XR_BUTTON_LEFT_GRIP] ? 0.35f : 0.5f));
+	now[AERON_XR_BUTTON_DPAD_UP]      = (uint8_t)touch->dpad_up;
+	now[AERON_XR_BUTTON_DPAD_DOWN]    = (uint8_t)touch->dpad_down;
+	now[AERON_XR_BUTTON_DPAD_LEFT]    = (uint8_t)touch->dpad_left;
+	now[AERON_XR_BUTTON_DPAD_RIGHT]   = (uint8_t)touch->dpad_right;
+	now[AERON_XR_BUTTON_BUMPER_LEFT]  = (uint8_t)touch->left_bumper;
+	now[AERON_XR_BUTTON_BUMPER_RIGHT] = (uint8_t)touch->right_bumper;
+	held = 0;
 	for (b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
-		if (b == AERON_XR_BUTTON_LEFT_TRIGGER &&
-			(g_xr_trigger_captured[Aeron_XrPhysicalHand(AERON_XR_HAND_LEFT)] ||
-			 g_xr_trigger_latched[Aeron_XrPhysicalHand(AERON_XR_HAND_LEFT)])) {
+		const int trigger_hand = b == AERON_XR_BUTTON_LEFT_TRIGGER    ? AERON_XR_HAND_LEFT
+								 : b == AERON_XR_BUTTON_RIGHT_TRIGGER ? AERON_XR_HAND_RIGHT
+																	  : -1;
+		if (trigger_hand >= 0 && (g_xr_trigger_captured[Aeron_XrPhysicalHand(trigger_hand)] ||
+								  g_xr_trigger_latched[Aeron_XrPhysicalHand(trigger_hand)])) {
 			g_in.button_prev[b] = now[b]; /* owned by a game UI */
 			continue;
 		}
+		if (now[b]) {
+			held |= 1u << b;
+		}
 		if (g_xr_flight_buttons && now[b] && !g_in.button_prev[b]) {
-			/* No shifted layer: the left grip belongs to the game's quick
-			 * wheel (and grabbing panels). */
+			/* Grips owned by a game UI (a panel, the flight stick) read 0. */
 			Aeron_XrQueueButton((AeronXrButton)b, 0);
 		}
 		g_in.button_prev[b] = now[b];
 	}
+	g_xr_buttons_held = held;
 }
 
 static int Aeron_XrFindVirtualSlot(const AeronInputSnapshot* input) {
@@ -1044,6 +1097,20 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	touch.x                 = Aeron_XrBool(g_in.x, -1);
 	touch.y                 = Aeron_XrBool(g_in.y, -1);
 	touch.menu              = Aeron_XrBool(g_in.menu, -1);
+	if (g_in.dpad_up) {
+		touch.dpad_up    = Aeron_XrBool(g_in.dpad_up, -1);
+		touch.dpad_down  = Aeron_XrBool(g_in.dpad_down, -1);
+		touch.dpad_left  = Aeron_XrBool(g_in.dpad_left, -1);
+		touch.dpad_right = Aeron_XrBool(g_in.dpad_right, -1);
+	}
+	if (g_in.bumper) {
+		touch.left_bumper  = Aeron_XrBool(g_in.bumper, AERON_XR_HAND_LEFT);
+		touch.right_bumper = Aeron_XrBool(g_in.bumper, AERON_XR_HAND_RIGHT);
+	}
+	if (touch.dpad_up || touch.dpad_down || touch.dpad_left || touch.dpad_right || touch.left_bumper ||
+		touch.right_bumper) {
+		g_xr_frame_controls = 1; /* in case the profile change was not reported */
+	}
 
 	g_in.hand_trigger[AERON_XR_HAND_LEFT]  = touch.left_trigger;
 	g_in.hand_trigger[AERON_XR_HAND_RIGHT] = touch.right_trigger;
@@ -1051,10 +1118,21 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 	g_in.hand_grip[AERON_XR_HAND_RIGHT]    = touch.right_grip;
 	g_in.hand_buttons[AERON_XR_HAND_LEFT] =
 		(touch.x ? AERON_XR_HAND_BUTTON_LOWER : 0u) | (touch.y ? AERON_XR_HAND_BUTTON_UPPER : 0u) |
-		(touch.left_stick_click ? AERON_XR_HAND_BUTTON_STICK : 0u) | (touch.menu ? AERON_XR_HAND_BUTTON_MENU : 0u);
+		(touch.left_stick_click ? AERON_XR_HAND_BUTTON_STICK : 0u) | (touch.menu ? AERON_XR_HAND_BUTTON_MENU : 0u) |
+		(touch.left_bumper ? AERON_XR_HAND_BUTTON_BUMPER : 0u) | (touch.dpad_up ? AERON_XR_HAND_BUTTON_DPAD_UP : 0u) |
+		(touch.dpad_down ? AERON_XR_HAND_BUTTON_DPAD_DOWN : 0u) |
+		(touch.dpad_left ? AERON_XR_HAND_BUTTON_DPAD_LEFT : 0u) |
+		(touch.dpad_right ? AERON_XR_HAND_BUTTON_DPAD_RIGHT : 0u);
 	g_in.hand_buttons[AERON_XR_HAND_RIGHT] = (touch.a ? AERON_XR_HAND_BUTTON_LOWER : 0u) |
 											 (touch.b ? AERON_XR_HAND_BUTTON_UPPER : 0u) |
-											 (touch.right_stick_click ? AERON_XR_HAND_BUTTON_STICK : 0u);
+											 (touch.right_stick_click ? AERON_XR_HAND_BUTTON_STICK : 0u) |
+											 (touch.right_bumper ? AERON_XR_HAND_BUTTON_BUMPER : 0u);
+	if (!g_xr_flight_buttons) {
+		/* Menus: the Frame's d-pad down / up are X / Y (Space, the menu
+		 * scene's buttons); in flight they are buttons of their own. */
+		touch.x = touch.x || touch.dpad_down;
+		touch.y = touch.y || touch.dpad_up;
+	}
 	for (int h = 0; h < AERON_XR_HAND_COUNT; ++h) {
 		g_in.hand_index_touch[h] = -1;
 		g_in.hand_thumb_touch[h] = -1;
@@ -1231,6 +1309,11 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 				if (g_xr_trigger_captured[other] || g_xr_trigger_latched[other]) {
 					mapped.left_trigger = 0.0f;
 				}
+			}
+			if (g_xr_flight_buttons && !g_xr_menu_keys) {
+				/* Fire: whichever buttons the game put it on (the right
+				 * trigger unless it says otherwise). */
+				mapped.right_trigger = (g_xr_buttons_held & g_xr_fire_buttons) ? 1.0f : 0.0f;
 			}
 			AeronXrTouchMapper_Map(&g_in.mapper, &mapped, dt_seconds, pad);
 		}
