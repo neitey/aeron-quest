@@ -472,6 +472,64 @@ int Aeron_XrInputInit(void) {
 		}
 		Aeron_XrSuggest("/interaction_profiles/valve/index_controller", index,
 						(uint32_t)SDL_arraysize(index));
+		if (g_xr.has_valve_frame) {
+			/* Steam Frame controllers: a d-pad and View on the left; A B X Y
+			 * and Menu on the right; a bumper above each trigger; no thumb
+			 * rest. Without this SteamVR maps Touch onto them: X and Y on
+			 * the d-pad's down / up, B on three buttons, nothing on the
+			 * bumpers. Here X / Y are on the right's X / Y as well as the
+			 * d-pad, Menu and View both open the menu, and the bumpers stand
+			 * in for the thumb rest (voice commands). */
+			XrActionSuggestedBinding frame[64];
+			uint32_t                 n = 0;
+			static const char* const hands[2] = { "left", "right" };
+			char                     path[96];
+#define AERON_XR_FRAME_BIND(action, fmt, hand)                                                                \
+	do {                                                                                                      \
+		if ((action) && n < SDL_arraysize(frame)) {                                                           \
+			SDL_snprintf(path, sizeof path, "/user/hand/%s/" fmt, hand);                                       \
+			frame[n++] = (XrActionSuggestedBinding) { (action), Aeron_XrPath(path) };                         \
+		}                                                                                                     \
+	} while (0)
+			for (int hh = 0; hh < 2; ++hh) {
+				AERON_XR_FRAME_BIND(g_in.stick, "input/thumbstick", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.trigger, "input/trigger/value", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.grip, "input/squeeze/value", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.stick_click, "input/thumbstick/click", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.aim, "input/aim/pose", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.grip_pose, "input/grip/pose", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.haptic, "output/haptic", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.trigger_touch, "input/trigger/touch", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.thumb_touch, "input/thumbstick/touch", hands[hh]);
+				AERON_XR_FRAME_BIND(g_in.thumbrest_touch, "input/bumper/click", hands[hh]);
+			}
+			AERON_XR_FRAME_BIND(g_in.a, "input/a/click", "right");
+			AERON_XR_FRAME_BIND(g_in.b, "input/b/click", "right");
+			AERON_XR_FRAME_BIND(g_in.x, "input/x/click", "right");
+			AERON_XR_FRAME_BIND(g_in.y, "input/y/click", "right");
+			AERON_XR_FRAME_BIND(g_in.x, "input/dpad_down/click", "left");
+			AERON_XR_FRAME_BIND(g_in.y, "input/dpad_up/click", "left");
+			AERON_XR_FRAME_BIND(g_in.menu, "input/view/click", "left");
+			AERON_XR_FRAME_BIND(g_in.menu, "input/menu/click", "right");
+			{
+				static const char* const right_touch[] = { "input/a/touch", "input/b/touch", "input/x/touch",
+														   "input/y/touch" };
+				static const char* const left_touch[]  = { "input/dpad_up/touch", "input/dpad_down/touch",
+														   "input/dpad_left/touch", "input/dpad_right/touch" };
+				for (size_t k = 0; k < SDL_arraysize(right_touch) && g_in.thumb_touch && n + 2 <= SDL_arraysize(frame);
+					 ++k) {
+					SDL_snprintf(path, sizeof path, "/user/hand/right/%s", right_touch[k]);
+					frame[n++] = (XrActionSuggestedBinding) { g_in.thumb_touch, Aeron_XrPath(path) };
+					SDL_snprintf(path, sizeof path, "/user/hand/left/%s", left_touch[k]);
+					frame[n++] = (XrActionSuggestedBinding) { g_in.thumb_touch, Aeron_XrPath(path) };
+				}
+			}
+#undef AERON_XR_FRAME_BIND
+			if (Aeron_XrSuggest("/interaction_profiles/valve/frame_controller_valve", frame, n)) {
+				g_in.touch_bound = 1;
+				Aeron_LogInfo("aeron.xr", "bindings suggested for /interaction_profiles/valve/frame_controller_valve");
+			}
+		}
 		{
 			/* Pico 4 / Neo 3 / 4 Ultra and HTC Focus 3 controllers: Touch's
 			 * layout (A/B right, X/Y left, menu left), with touch sensors on

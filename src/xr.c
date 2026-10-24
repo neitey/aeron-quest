@@ -183,6 +183,7 @@ static void Aeron_XrPickExtensions(void) {
 		XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_BD_ULTRA_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
+		"XR_VALVE_frame_controller_interaction",
 		/* Controller models the runtime draws for us (xr_render_model.c). */
 		XR_FB_RENDER_MODEL_EXTENSION_NAME,
 		XR_EXT_RENDER_MODEL_EXTENSION_NAME,
@@ -276,8 +277,21 @@ static void Aeron_XrPickExtensions(void) {
 			}
 		}
 	}
-	if (g_xr_add_uuid && g_xr.extension_count < SDL_arraysize(g_xr.extensions)) {
-		g_xr.extensions[g_xr.extension_count++] = "XR_EXT_uuid";
+	/* XR_EXT_render_model needs XR_EXT_uuid on OpenXR 1.0 (the Steam Frame's
+	 * runtime turns the instance down without it). */
+	{
+		int has_model = 0, has_uuid = 0, offered_uuid = g_xr_add_uuid;
+		for (uint32_t i = 0; i < g_xr.extension_count; ++i) {
+			has_model |= strcmp(g_xr.extensions[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0;
+			has_uuid |= strcmp(g_xr.extensions[i], XR_EXT_UUID_EXTENSION_NAME) == 0;
+		}
+		for (uint32_t i = 0; i < count && !offered_uuid; ++i) {
+			offered_uuid = strcmp(props[i].extensionName, XR_EXT_UUID_EXTENSION_NAME) == 0;
+		}
+		if (has_model && !has_uuid && offered_uuid && !Aeron_XrDropped(XR_EXT_UUID_EXTENSION_NAME) &&
+			g_xr.extension_count < SDL_arraysize(g_xr.extensions)) {
+			g_xr.extensions[g_xr.extension_count++] = XR_EXT_UUID_EXTENSION_NAME;
+		}
 	}
 	SDL_free(props);
 	for (uint32_t i = 0; i < g_xr.extension_count; ++i) {
@@ -291,6 +305,8 @@ static void Aeron_XrPickExtensions(void) {
 			g_xr.has_bd_ultra = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME) == 0) {
 			g_xr.has_htc_focus3 = 1;
+		} else if (strcmp(g_xr.extensions[i], "XR_VALVE_frame_controller_interaction") == 0) {
+			g_xr.has_valve_frame = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_FB_RENDER_MODEL_EXTENSION_NAME) == 0) {
 			g_xr.has_fb_render_model = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0) {
@@ -503,6 +519,28 @@ int Aeron_XrRecoverInstanceFailure(void) {
 		api = v11;
 	}
 	for (uint32_t i = 0; i < count; ++i) {
+		if (strcmp(opt[i], XR_EXT_UUID_EXTENSION_NAME) == 0) {
+			continue; /* goes with XR_EXT_render_model */
+		}
+		if (strcmp(opt[i], XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME) == 0) {
+			/* Needs XR_EXT_render_model (and that XR_EXT_uuid). */
+			const char* deps[3] = { XR_EXT_RENDER_MODEL_EXTENSION_NAME, XR_EXT_UUID_EXTENSION_NAME, opt[i] };
+			r = Aeron_XrTryInstance(gipa, create, api, deps, 3);
+			if (XR_FAILED(r)) {
+				const char* no_uuid[2] = { XR_EXT_RENDER_MODEL_EXTENSION_NAME, opt[i] };
+				r = Aeron_XrTryInstance(gipa, create, api, no_uuid, 2);
+			} else {
+				g_xr_add_uuid = 1;
+			}
+			Aeron_LogWarn("aeron.xr", "instance check: %s (with XR_EXT_render_model): %s", opt[i],
+						  Aeron_XrResultName(r));
+			if (XR_SUCCEEDED(r)) {
+				keep[kept++] = opt[i];
+			} else if (g_xr_dropped_count < (int)SDL_arraysize(g_xr_dropped)) {
+				SDL_strlcpy(g_xr_dropped[g_xr_dropped_count++], opt[i], XR_MAX_EXTENSION_NAME_SIZE);
+			}
+			continue;
+		}
 		r = Aeron_XrTryInstance(gipa, create, api, &opt[i], 1);
 		if (XR_FAILED(r) && strcmp(opt[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0) {
 			const char* pair[2] = { opt[i], "XR_EXT_uuid" };
@@ -691,6 +729,18 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 					  XR_VERSION_MAJOR(instance_properties.runtimeVersion),
 					  XR_VERSION_MINOR(instance_properties.runtimeVersion),
 					  XR_VERSION_PATCH(instance_properties.runtimeVersion));
+#if defined(SDL_PLATFORM_ANDROID)
+		g_xr.quads_over_projection = strstr(instance_properties.runtimeName, "SteamVR") != NULL;
+#endif
+	}
+	{
+		const char* v = SDL_getenv("AERON_XR_EYE_OVERLAY");
+		if (v && v[0]) {
+			g_xr.quads_over_projection = v[0] == '0';
+		}
+		if (g_xr.quads_over_projection) {
+			Aeron_LogInfo("aeron.xr", "panels are composited over the 3D view here: no hand overlay layer");
+		}
 	}
 	g_xr.max_layers = XR_MIN_COMPOSITION_LAYERS_SUPPORTED;
 	if (XR_SUCCEEDED(g_xr.xrGetSystemProperties(g_xr.instance, g_xr.system_id, &system_properties))) {

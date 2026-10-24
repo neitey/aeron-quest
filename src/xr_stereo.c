@@ -665,7 +665,7 @@ void Aeron_XrStereoCommitConsole(const AeronXrPanel* console) {
 }
 
 void Aeron_XrStereoCommitEyeOverlay(void) {
-	g_st.eye_overlay = g_st.committed;
+	g_st.eye_overlay = g_st.committed && !g_xr.quads_over_projection;
 	memset(g_st.overlay_rect, 0, sizeof g_st.overlay_rect);
 }
 
