@@ -478,8 +478,8 @@ int Aeron_XrInputInit(void) {
 			 * rest. Without this SteamVR maps Touch onto them: X and Y on
 			 * the d-pad's down / up, B on three buttons, nothing on the
 			 * bumpers. Here X / Y are on the right's X / Y as well as the
-			 * d-pad, Menu and View both open the menu, and the bumpers stand
-			 * in for the thumb rest (voice commands). */
+			 * d-pad, Menu and View both open the menu, and the left bumper
+			 * stands in for the thumb rest (voice commands). */
 			XrActionSuggestedBinding frame[64];
 			uint32_t                 n = 0;
 			static const char* const hands[2] = { "left", "right" };
@@ -501,8 +501,10 @@ int Aeron_XrInputInit(void) {
 				AERON_XR_FRAME_BIND(g_in.haptic, "output/haptic", hands[hh]);
 				AERON_XR_FRAME_BIND(g_in.trigger_touch, "input/trigger/touch", hands[hh]);
 				AERON_XR_FRAME_BIND(g_in.thumb_touch, "input/thumbstick/touch", hands[hh]);
-				AERON_XR_FRAME_BIND(g_in.thumbrest_touch, "input/bumper/click", hands[hh]);
 			}
+			/* Voice commands on the left bumper (the shoulder button above the
+			 * left trigger); the right bumper stays free. */
+			AERON_XR_FRAME_BIND(g_in.thumbrest_touch, "input/bumper/click", "left");
 			AERON_XR_FRAME_BIND(g_in.a, "input/a/click", "right");
 			AERON_XR_FRAME_BIND(g_in.b, "input/b/click", "right");
 			AERON_XR_FRAME_BIND(g_in.x, "input/x/click", "right");
