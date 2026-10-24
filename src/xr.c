@@ -18,6 +18,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(AERON_HAS_OPENXR) && defined(SDL_PLATFORM_ANDROID)
+#include <jni.h>
+#endif
+
 /* -1 = undecided (read AERON_XR), 0 = off, 1 = on. Once XR setup fails it
  * is switched off for the rest of the run so the desktop path is used. */
 static int g_xr_requested = -1;
@@ -41,6 +45,8 @@ int Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties) {
 	}
 	return 0;
 }
+
+int Aeron_XrRecoverInstanceFailure(void) { return 0; }
 
 int Aeron_XrInit(SDL_GPUDevice* device, int w, int h, SDL_GPUTextureFormat f) {
 	(void)device;
@@ -148,6 +154,24 @@ static float Aeron_XrEnvFloat(const char* name, float fallback) {
 	return fallback;
 }
 
+/* After a failed instance creation (Aeron_XrRecoverInstanceFailure): the
+ * optional extensions the runtime turned down, whether XR_EXT_uuid goes
+ * with XR_EXT_render_model, and the API version to ask for (0 = SDL's
+ * default, 1.0). */
+static char      g_xr_dropped[16][XR_MAX_EXTENSION_NAME_SIZE];
+static int       g_xr_dropped_count;
+static int       g_xr_add_uuid;
+static XrVersion g_xr_api_version;
+
+static int Aeron_XrDropped(const char* name) {
+	for (int i = 0; i < g_xr_dropped_count; ++i) {
+		if (strcmp(g_xr_dropped[i], name) == 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* The optional instance extensions this runtime offers. Enabling one it
  * lacks would fail instance creation, so ask the loader first. */
 static void Aeron_XrPickExtensions(void) {
@@ -240,6 +264,9 @@ static void Aeron_XrPickExtensions(void) {
 			if (strcmp(wanted[w], XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME) == 0 && !offered_ext_render_model) {
 				continue;
 			}
+			if (Aeron_XrDropped(wanted[w])) {
+				continue;
+			}
 			for (uint32_t i = 0; i < count; ++i) {
 				if (strcmp(props[i].extensionName, wanted[w]) == 0 &&
 					g_xr.extension_count < SDL_arraysize(g_xr.extensions)) {
@@ -248,6 +275,9 @@ static void Aeron_XrPickExtensions(void) {
 				}
 			}
 		}
+	}
+	if (g_xr_add_uuid && g_xr.extension_count < SDL_arraysize(g_xr.extensions)) {
+		g_xr.extensions[g_xr.extension_count++] = "XR_EXT_uuid";
 	}
 	SDL_free(props);
 	for (uint32_t i = 0; i < g_xr.extension_count; ++i) {
@@ -349,6 +379,9 @@ int Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties) {
 	}
 	SDL_zero(g_xr);
 	Aeron_XrPickExtensions();
+	if (g_xr_api_version) {
+		SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_VERSION_NUMBER, (Sint64)g_xr_api_version);
+	}
 	if (g_xr.extension_count) {
 		SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER, g_xr.extension_count);
 		SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_NAMES_POINTER, (void*)g_xr.extensions);
@@ -363,6 +396,153 @@ int Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties) {
 		   SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_APPLICATION_VERSION_NUMBER, 1) &&
 		   SDL_SetStringProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_ENGINE_NAME_STRING, "Aeron") &&
 		   SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_ENGINE_VERSION_NUMBER, 1);
+}
+
+/* SDL creates the instance and only says that it failed (the Steam Frame's
+ * runtime turned it down without a word). Create test instances the same
+ * way to log the runtime's answer and find what it rejects: each optional
+ * extension on its own, then the API version. */
+typedef struct AeronXrAndroidCreateInfo {
+	XrStructureType type;
+	const void*     next;
+	void*           applicationVM;
+	void*           applicationActivity;
+} AeronXrAndroidCreateInfo;
+
+static XrResult Aeron_XrTryInstance(PFN_xrGetInstanceProcAddr gipa, PFN_xrCreateInstance create, XrVersion api,
+									const char* const* optional, uint32_t optional_count) {
+	const char*          names[24];
+	uint32_t             n = 0;
+	XrInstanceCreateInfo info;
+	XrInstance           instance = XR_NULL_HANDLE;
+	XrResult             result;
+	SDL_zero(info);
+	/* What SDL adds itself: its graphics binding (Vulkan here) and, on
+	 * Android, the create-instance extension. */
+	names[n++] = "XR_KHR_vulkan_enable2";
+#if defined(SDL_PLATFORM_ANDROID)
+	names[n++] = "XR_KHR_android_create_instance";
+	AeronXrAndroidCreateInfo android;
+	JNIEnv*                  env = (JNIEnv*)SDL_GetAndroidJNIEnv();
+	JavaVM*                  vm  = NULL;
+	jobject                  activity = (jobject)SDL_GetAndroidActivity();
+	if (env) {
+		(*env)->GetJavaVM(env, &vm);
+	}
+	SDL_zero(android);
+	android.type                = XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR;
+	android.applicationVM       = vm;
+	android.applicationActivity = activity;
+	info.next                   = &android;
+#endif
+	for (uint32_t i = 0; i < optional_count && n < SDL_arraysize(names); ++i) {
+		names[n++] = optional[i];
+	}
+	info.type                       = XR_TYPE_INSTANCE_CREATE_INFO;
+	info.applicationInfo.apiVersion = api;
+	SDL_strlcpy(info.applicationInfo.applicationName, "OpenXWA", XR_MAX_APPLICATION_NAME_SIZE);
+	info.applicationInfo.applicationVersion = 1;
+	SDL_strlcpy(info.applicationInfo.engineName, "Aeron", XR_MAX_ENGINE_NAME_SIZE);
+	info.applicationInfo.engineVersion = 1;
+	info.enabledExtensionCount         = n;
+	info.enabledExtensionNames         = names;
+	result                             = create(&info, &instance);
+	if (XR_SUCCEEDED(result) && instance != XR_NULL_HANDLE) {
+		PFN_xrDestroyInstance destroy = NULL;
+		if (XR_SUCCEEDED(gipa(instance, "xrDestroyInstance", (PFN_xrVoidFunction*)&destroy)) && destroy) {
+			destroy(instance);
+		}
+	}
+#if defined(SDL_PLATFORM_ANDROID)
+	if (env && activity) {
+		(*env)->DeleteLocalRef(env, activity);
+	}
+#endif
+	return result;
+}
+
+int Aeron_XrRecoverInstanceFailure(void) {
+	static int                 tried;
+	PFN_xrGetInstanceProcAddr  gipa;
+	PFN_xrCreateInstance       create = NULL;
+	const char*                opt[16];
+	const char*                keep[16];
+	uint32_t                   count = g_xr.extension_count;
+	uint32_t                   kept  = 0;
+	XrResult                   r;
+	const XrVersion            v10 = XR_MAKE_VERSION(1, 0, 0);
+	const XrVersion            v11 = XR_MAKE_VERSION(1, 1, 0);
+	XrVersion                  api = v10;
+
+	if (tried) {
+		return 0;
+	}
+	tried = 1;
+	gipa  = (PFN_xrGetInstanceProcAddr)SDL_OpenXR_GetXrGetInstanceProcAddr();
+	if (!gipa || XR_FAILED(gipa(XR_NULL_HANDLE, "xrCreateInstance", (PFN_xrVoidFunction*)&create)) || !create) {
+		Aeron_LogWarn("aeron.xr", "instance check: no xrCreateInstance");
+		return 0;
+	}
+	for (uint32_t i = 0; i < count; ++i) {
+		opt[i] = g_xr.extensions[i];
+	}
+	r = Aeron_XrTryInstance(gipa, create, v10, opt, count);
+	Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.0 with the %u optional extensions: %s", count,
+				  Aeron_XrResultName(r));
+	if (XR_SUCCEEDED(r)) {
+		return 0; /* The instance is fine; SDL failed after it. */
+	}
+	r = Aeron_XrTryInstance(gipa, create, v10, NULL, 0);
+	Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.0 without them: %s", Aeron_XrResultName(r));
+	if (XR_FAILED(r)) {
+		r = Aeron_XrTryInstance(gipa, create, v11, NULL, 0);
+		Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.1 without them: %s", Aeron_XrResultName(r));
+		if (XR_FAILED(r)) {
+			return 0;
+		}
+		api = v11;
+	}
+	for (uint32_t i = 0; i < count; ++i) {
+		r = Aeron_XrTryInstance(gipa, create, api, &opt[i], 1);
+		if (XR_FAILED(r) && strcmp(opt[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0) {
+			const char* pair[2] = { opt[i], "XR_EXT_uuid" };
+			const XrResult with_uuid = Aeron_XrTryInstance(gipa, create, api, pair, 2);
+			Aeron_LogWarn("aeron.xr", "instance check: %s with XR_EXT_uuid: %s", opt[i],
+						  Aeron_XrResultName(with_uuid));
+			if (XR_SUCCEEDED(with_uuid)) {
+				g_xr_add_uuid = 1;
+				r             = with_uuid;
+			}
+		}
+		Aeron_LogWarn("aeron.xr", "instance check: %s: %s", opt[i], Aeron_XrResultName(r));
+		if (XR_SUCCEEDED(r)) {
+			keep[kept++] = opt[i];
+		} else if (g_xr_dropped_count < (int)SDL_arraysize(g_xr_dropped)) {
+			SDL_strlcpy(g_xr_dropped[g_xr_dropped_count++], opt[i], XR_MAX_EXTENSION_NAME_SIZE);
+		}
+	}
+	{
+		const char* both[18];
+		uint32_t    n = 0;
+		for (uint32_t i = 0; i < kept; ++i) {
+			both[n++] = keep[i];
+		}
+		if (g_xr_add_uuid) {
+			both[n++] = "XR_EXT_uuid";
+		}
+		r = Aeron_XrTryInstance(gipa, create, api, both, n);
+	}
+	Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.%d with the %u accepted extensions: %s",
+				  api == v11 ? 1 : 0, kept, Aeron_XrResultName(r));
+	if (XR_FAILED(r)) {
+		/* Each works alone but not together: go without any. */
+		for (uint32_t i = 0; i < kept && g_xr_dropped_count < (int)SDL_arraysize(g_xr_dropped); ++i) {
+			SDL_strlcpy(g_xr_dropped[g_xr_dropped_count++], keep[i], XR_MAX_EXTENSION_NAME_SIZE);
+		}
+		g_xr_add_uuid = 0;
+	}
+	g_xr_api_version = api == v11 ? v11 : 0;
+	return 1;
 }
 
 static int Aeron_XrLoadFunctions(void) {

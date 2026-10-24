@@ -35,6 +35,10 @@ extern "C" {
 int  Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties);
 int  Aeron_XrRequested(void);
 void Aeron_XrSetRequested(int requested);
+/* After the GPU device with OpenXR failed: checks the instance creation on
+ * its own, logs the runtime's answer and leaves out what it rejects.
+ * Returns 1 when creating the device again is worth a try (once). */
+int  Aeron_XrRecoverInstanceFailure(void);
 
 /* Creates the session, reference space, the virtual-screen swapchain and its
  * intermediate texture. Returns 0 (and leaves XR inactive) on failure. */

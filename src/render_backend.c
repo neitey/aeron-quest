@@ -1522,6 +1522,10 @@ int Aeron_RenderBackendInit(void) {
 #endif
 
 	g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
+	if (!g_aeron.gpu_device && Aeron_XrRequested() && Aeron_XrRecoverInstanceFailure()) {
+		Aeron_LogWarn("aeron", "GPU device creation with OpenXR failed; trying again with what the runtime accepts");
+		g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
+	}
 	if (!g_aeron.gpu_device && Aeron_XrRequested()) {
 		/* No usable OpenXR runtime/headset: keep the desktop game working. */
 		Aeron_LogWarn("aeron", "GPU device creation with OpenXR failed: %s; continuing without XR",
