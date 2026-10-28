@@ -79,6 +79,8 @@ typedef struct AeronAudioSystem {
 	int               device_buffer_input_frames;
 	int               device_paused;
 	uint64_t          device_paused_ns;
+	uint64_t          last_callback_ns; /* the device last asked for samples */
+	uint64_t          last_kick_ns;     /* Aeron_AudioKickStalledDevice */
 	SDL_Mutex*        lock;
 	SDL_Condition*    stream_space_available;
 	uint64_t          submitted_frames; /* includes silence mixed after a voice ends */
@@ -506,6 +508,9 @@ static void SDLCALL Aeron_AudioCallback(void* userdata, SDL_AudioStream* stream,
 	(void)total_amount;
 
 	int frames_remaining = additional_amount / (AERON_AUDIO_DEVICE_CHANNELS * (int)sizeof(int16_t));
+	SDL_LockMutex(g_audio.lock);
+	g_audio.last_callback_ns = SDL_GetTicksNS();
+	SDL_UnlockMutex(g_audio.lock);
 	while (frames_remaining > 0) {
 		int chunk = frames_remaining < AERON_AUDIO_MIX_CHUNK ? frames_remaining : AERON_AUDIO_MIX_CHUNK;
 		Aeron_AudioMixChunk(chunk);
@@ -1407,12 +1412,41 @@ uint64_t Aeron_AudioStreamConsumedFrames(AeronAudioStream stream) {
 	return consumed;
 }
 
+/* The output device stopped asking for samples while it should be playing:
+ * seen on Quest after a long main-thread stall at startup (the intro film,
+ * clocked by its audio, then held its first frame until a trip to the
+ * system menu paused and resumed the device). Do that pause / resume here,
+ * at most once a second. Called without g_audio.lock (SDL's stream lock is
+ * taken first in the callback). */
+#define AERON_AUDIO_STALL_NS 500000000ull
+static void Aeron_AudioKickStalledDevice(void) {
+	const uint64_t now_ns = SDL_GetTicksNS();
+	uint64_t       stalled_ns = 0;
+	SDL_LockMutex(g_audio.lock);
+	if (!g_audio.device_paused && g_audio.last_callback_ns != 0 &&
+		now_ns - g_audio.last_callback_ns > AERON_AUDIO_STALL_NS &&
+		now_ns - g_audio.last_kick_ns > 1000000000ull) {
+		stalled_ns          = now_ns - g_audio.last_callback_ns;
+		g_audio.last_kick_ns = now_ns;
+	}
+	SDL_UnlockMutex(g_audio.lock);
+	if (!stalled_ns) {
+		return;
+	}
+	Aeron_LogWarn("aeron.audio", "output stalled for %llu ms: restarting the device",
+				  (unsigned long long)(stalled_ns / 1000000ull));
+	if (!SDL_PauseAudioStreamDevice(g_audio.device) || !SDL_ResumeAudioStreamDevice(g_audio.device)) {
+		Aeron_LogError("aeron.audio", "device restart failed: %s", SDL_GetError());
+	}
+}
+
 uint64_t Aeron_AudioStreamAudibleFrames(AeronAudioStream stream) {
 	uint64_t audible = 0;
 
 	if (!g_audio.initialized) {
 		return 0;
 	}
+	Aeron_AudioKickStalledDevice(); /* a film's clock: it must not stand still */
 	SDL_LockMutex(g_audio.lock);
 	AeronAudioStreamSlot* slot = Aeron_AudioResolveStream(stream);
 	if (slot) {
