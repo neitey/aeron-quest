@@ -427,6 +427,12 @@ void Aeron_VideoUpdate(AeronVideoPlayer* player) {
 		player->playback_started      = 0;
 		player->audio_prebuffer_ready = 0;
 		pause_audio                   = 1;
+		/* The worker may be parked in AeronVideo_ReserveFrame on a full
+		 * video queue (the caller stalled while audio played on and drained).
+		 * Nothing is promoted while rebuffering, so without this wake it
+		 * would never see BUFFERING, never drop frames to refill the audio,
+		 * and the film would hold on its frame for good. */
+		SDL_BroadcastCondition(player->condition);
 	}
 	player->last_audio_underruns = underruns;
 
