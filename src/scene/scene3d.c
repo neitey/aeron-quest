@@ -1548,7 +1548,7 @@ static int scene_direct_ensure(AeronScene3D* s, AeronTextureFormat format) {
 			return 0;
 		}
 		AeronSceneMeshOverlay_Ensure(s);
-		const char* variant = getenv("AERON_PBR_SHADER");
+		const char* variant = SDL_getenv("AERON_PBR_SHADER");
 		const int   lite    = variant && strcmp(variant, "lite") == 0;
 		for (int attempt = lite ? 0 : 1; attempt < 2 && !(s->direct.pbr_fs && s->direct.pbr_mask_fs); ++attempt) {
 			if (s->direct.pbr_fs) {
