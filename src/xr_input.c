@@ -1164,10 +1164,17 @@ void Aeron_XrUpdateInput(AeronInputSnapshot* input, float dt_seconds) {
 			}
 			if (g_xr_vstick_active && !g_xr_menu_keys) {
 				/* The game's virtual flight stick: per axis, whichever of it
-				 * and the thumbstick is pushed further. */
+				 * and the thumbstick is pushed further.
+				 * AERON_XR_INVERT_VSTICK_PITCH=1: pulled back = nose down
+				 * (its own setting; the thumbstick's is above). */
+				const char* invert_vstick = SDL_getenv("AERON_XR_INVERT_VSTICK_PITCH");
+				float vstick[2] = { g_xr_vstick[0], g_xr_vstick[1] };
+				if (invert_vstick && invert_vstick[0] == '1') {
+					vstick[1] = -vstick[1];
+				}
 				for (int a = 0; a < 2; ++a) {
-					if (fabsf(g_xr_vstick[a]) > fabsf(mapped.right_stick[a])) {
-						mapped.right_stick[a] = g_xr_vstick[a];
+					if (fabsf(vstick[a]) > fabsf(mapped.right_stick[a])) {
+						mapped.right_stick[a] = vstick[a];
 					}
 				}
 				mapped.active_right = 1;
