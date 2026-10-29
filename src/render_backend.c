@@ -1524,6 +1524,10 @@ int Aeron_RenderBackendInit(void) {
 	Aeron_LogInfo("aeron", "Creating the GPU device%s (driver hint: %s)", Aeron_XrRequested() ? " with OpenXR" : "",
 				  SDL_GetHint(SDL_HINT_GPU_DRIVER) ? SDL_GetHint(SDL_HINT_GPU_DRIVER) : "default");
 	g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
+	if (!g_aeron.gpu_device && Aeron_XrRequested() && Aeron_XrRecoverInstanceFailure()) {
+		Aeron_LogWarn("aeron", "GPU device creation with OpenXR failed; trying again with what the runtime accepts");
+		g_aeron.gpu_device = Aeron_CreateGPUDeviceWithOptionalFp16(shader_formats);
+	}
 #if defined(SDL_PLATFORM_WINDOWS)
 	/* Windows tries Direct3D 12 first. A PC VR runtime that cannot start a
 	 * session with it may still work with Vulkan, so try that before giving

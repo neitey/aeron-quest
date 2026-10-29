@@ -362,6 +362,10 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 	/* Leftover vertical navigation: declaration order (columns declare
 	 * column-major, so this walks down a column then into the next). */
 	int moves = ctx->nav[UI_DIR_DOWN] - ctx->nav[UI_DIR_UP];
+	/* Only stick / key navigation scrolls the focus into view: the pointer
+	 * focuses what it is over (already in view), and a scroll region the
+	 * player scrolled (wheel, thumb) must stay where they put it. */
+	const int navigated = moves != 0 || ctx->nav[UI_DIR_RIGHT] != ctx->nav[UI_DIR_LEFT];
 	while (moves != 0) {
 		const int next = ui_next_focusable(ctx, focus_index, moves > 0 ? 1 : -1, top_scope);
 		if (next < 0) {
@@ -386,7 +390,9 @@ void ui_resolve_navigation(AeronUiContext* ctx) {
 	if (ctx->text_edit_id && ctx->text_edit_id != ctx->focus_id) {
 		ctx->text_edit_id = 0;
 	}
-	ui_scroll_focus_into_view(ctx, &ctx->widgets[focus_index]);
+	if (navigated) {
+		ui_scroll_focus_into_view(ctx, &ctx->widgets[focus_index]);
+	}
 
 	if (ctx->focus_id != ctx->focus_at_frame_start) {
 		ui_play_sound(ctx, AERON_UI_SOUND_FOCUS);

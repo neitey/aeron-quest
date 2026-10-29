@@ -30,11 +30,18 @@ typedef struct AeronXr {
 	/* LOCAL recentred on the head: local_space is LOCAL offset by
 	 * local_pose (yaw + position of the head when recentred). */
 	XrSpace        view_space;
+	/* LOCAL as it was at the start, kept to check where the runtime puts a
+	 * new LOCAL space (the Steam Frame puts it at the head's heading). */
+	XrSpace        base_space;
 	XrPosef        local_pose;
 	int            recenter_pending;
 	int            recenter_frames;
 	XrSessionState state;
 	uint32_t       max_layers; /* composition layers the runtime accepts per frame */
+	/* The compositor draws quad layers over every projection layer whatever
+	 * their order (SteamVR on the Steam Frame): the hands' second projection
+	 * layer cannot come out in front of the panels there, so it is left out. */
+	int            quads_over_projection;
 	int            session_running;
 	int            exit_requested;
 
@@ -134,6 +141,7 @@ typedef struct AeronXr {
 	int         has_bd_ultra;        /* XR_BD_ultra_controller_interaction: Pico 4 Ultra */
 	int         has_htc_focus3;      /* XR_HTC_vive_focus3_controller_interaction */
 	int         has_hp_mr;           /* XR_EXT_hp_mixed_reality_controller: Reverb G2 */
+	int         has_valve_frame;     /* XR_VALVE_frame_controller_interaction: Steam Frame */
 	/* Controller models from the runtime (xr_render_model.c). */
 	int         has_fb_render_model;           /* XR_FB_render_model (Quest) */
 	int         has_ext_render_model;          /* XR_EXT_render_model */

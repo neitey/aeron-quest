@@ -18,6 +18,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(AERON_HAS_OPENXR) && defined(SDL_PLATFORM_ANDROID)
+#include <jni.h>
+#endif
+
 /* -1 = undecided (read AERON_XR), 0 = off, 1 = on. Once XR setup fails it
  * is switched off for the rest of the run so the desktop path is used. */
 static int g_xr_requested = -1;
@@ -41,6 +45,8 @@ int Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties) {
 	}
 	return 0;
 }
+
+int Aeron_XrRecoverInstanceFailure(void) { return 0; }
 
 int Aeron_XrInit(SDL_GPUDevice* device, int w, int h, SDL_GPUTextureFormat f) {
 	(void)device;
@@ -115,7 +121,7 @@ double Aeron_XrDisplayRefreshRate(void) { return 0.0; }
 
 #include "xr_private.h"
 
-static int Aeron_XrSetLocalPose(const XrPosef* pose);
+static int Aeron_XrSetLocalPose(const XrPosef* pose, XrTime time);
 
 AeronXr g_xr;
 
@@ -148,6 +154,24 @@ static float Aeron_XrEnvFloat(const char* name, float fallback) {
 	return fallback;
 }
 
+/* After a failed instance creation (Aeron_XrRecoverInstanceFailure): the
+ * optional extensions the runtime turned down, whether XR_EXT_uuid goes
+ * with XR_EXT_render_model, and the API version to ask for (0 = SDL's
+ * default, 1.0). */
+static char      g_xr_dropped[16][XR_MAX_EXTENSION_NAME_SIZE];
+static int       g_xr_dropped_count;
+static int       g_xr_add_uuid;
+static XrVersion g_xr_api_version;
+
+static int Aeron_XrDropped(const char* name) {
+	for (int i = 0; i < g_xr_dropped_count; ++i) {
+		if (strcmp(g_xr_dropped[i], name) == 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* The optional instance extensions this runtime offers. Enabling one it
  * lacks would fail instance creation, so ask the loader first. */
 static void Aeron_XrPickExtensions(void) {
@@ -160,6 +184,7 @@ static void Aeron_XrPickExtensions(void) {
 		XR_BD_ULTRA_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
 		XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME,
+		"XR_VALVE_frame_controller_interaction",
 		/* Controller models the runtime draws for us (xr_render_model.c). */
 		XR_FB_RENDER_MODEL_EXTENSION_NAME,
 		XR_EXT_RENDER_MODEL_EXTENSION_NAME,
@@ -241,6 +266,9 @@ static void Aeron_XrPickExtensions(void) {
 			if (strcmp(wanted[w], XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME) == 0 && !offered_ext_render_model) {
 				continue;
 			}
+			if (Aeron_XrDropped(wanted[w])) {
+				continue;
+			}
 			for (uint32_t i = 0; i < count; ++i) {
 				if (strcmp(props[i].extensionName, wanted[w]) == 0 &&
 					g_xr.extension_count < SDL_arraysize(g_xr.extensions)) {
@@ -248,6 +276,22 @@ static void Aeron_XrPickExtensions(void) {
 					break;
 				}
 			}
+		}
+	}
+	/* XR_EXT_render_model needs XR_EXT_uuid on OpenXR 1.0 (the Steam Frame's
+	 * runtime turns the instance down without it). */
+	{
+		int has_model = 0, has_uuid = 0, offered_uuid = g_xr_add_uuid;
+		for (uint32_t i = 0; i < g_xr.extension_count; ++i) {
+			has_model |= strcmp(g_xr.extensions[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0;
+			has_uuid |= strcmp(g_xr.extensions[i], XR_EXT_UUID_EXTENSION_NAME) == 0;
+		}
+		for (uint32_t i = 0; i < count && !offered_uuid; ++i) {
+			offered_uuid = strcmp(props[i].extensionName, XR_EXT_UUID_EXTENSION_NAME) == 0;
+		}
+		if (has_model && !has_uuid && offered_uuid && !Aeron_XrDropped(XR_EXT_UUID_EXTENSION_NAME) &&
+			g_xr.extension_count < SDL_arraysize(g_xr.extensions)) {
+			g_xr.extensions[g_xr.extension_count++] = XR_EXT_UUID_EXTENSION_NAME;
 		}
 	}
 	SDL_free(props);
@@ -264,6 +308,8 @@ static void Aeron_XrPickExtensions(void) {
 			g_xr.has_htc_focus3 = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME) == 0) {
 			g_xr.has_hp_mr = 1;
+		} else if (strcmp(g_xr.extensions[i], "XR_VALVE_frame_controller_interaction") == 0) {
+			g_xr.has_valve_frame = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_FB_RENDER_MODEL_EXTENSION_NAME) == 0) {
 			g_xr.has_fb_render_model = 1;
 		} else if (strcmp(g_xr.extensions[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0) {
@@ -315,10 +361,23 @@ static void Aeron_XrApplyRefreshRate(void) {
 	if (XR_FAILED(g_xr.xrEnumerateDisplayRefreshRatesFB(g_xr.session, 16, &count, rates)) || count == 0) {
 		return;
 	}
+	{
+		char   list[160];
+		size_t len = 0;
+		list[0]    = 0;
+		for (uint32_t i = 0; i < count && len + 8 < sizeof list; ++i) {
+			len += (size_t)SDL_snprintf(list + len, sizeof list - len, "%s%.0f", i ? " " : "", (double)rates[i]);
+		}
+		Aeron_LogInfo("aeron.xr", "display refresh rates offered: %s Hz (wanted %.0f)", list, (double)want);
+	}
 	for (uint32_t i = 0; i < count; ++i) {
 		if (best == 0.0f || SDL_fabsf(rates[i] - want) < SDL_fabsf(best - want)) {
 			best = rates[i];
 		}
+	}
+	if (SDL_fabsf(best - want) > 0.5f) {
+		Aeron_LogWarn("aeron.xr", "the headset does not offer %.0f Hz here (SteamVR: set the rate in its own "
+								  "settings); using %.0f Hz", (double)want, (double)best);
 	}
 	Aeron_LogInfo("aeron.xr", "display refresh %.0f Hz requested: %s", best,
 				  Aeron_XrResultName(g_xr.xrRequestDisplayRefreshRateFB(g_xr.session, best)));
@@ -352,6 +411,9 @@ int Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties) {
 	}
 	SDL_zero(g_xr);
 	Aeron_XrPickExtensions();
+	if (g_xr_api_version) {
+		SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_VERSION_NUMBER, (Sint64)g_xr_api_version);
+	}
 	if (g_xr.extension_count) {
 		SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER, g_xr.extension_count);
 		SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_NAMES_POINTER, (void*)g_xr.extensions);
@@ -366,6 +428,175 @@ int Aeron_XrConfigureDeviceProperties(SDL_PropertiesID properties) {
 		   SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_APPLICATION_VERSION_NUMBER, 1) &&
 		   SDL_SetStringProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_ENGINE_NAME_STRING, "Aeron") &&
 		   SDL_SetNumberProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_XR_ENGINE_VERSION_NUMBER, 1);
+}
+
+/* SDL creates the instance and only says that it failed (the Steam Frame's
+ * runtime turned it down without a word). Create test instances the same
+ * way to log the runtime's answer and find what it rejects: each optional
+ * extension on its own, then the API version. */
+typedef struct AeronXrAndroidCreateInfo {
+	XrStructureType type;
+	const void*     next;
+	void*           applicationVM;
+	void*           applicationActivity;
+} AeronXrAndroidCreateInfo;
+
+static XrResult Aeron_XrTryInstance(PFN_xrGetInstanceProcAddr gipa, PFN_xrCreateInstance create, XrVersion api,
+									const char* const* optional, uint32_t optional_count) {
+	const char*          names[24];
+	uint32_t             n = 0;
+	XrInstanceCreateInfo info;
+	XrInstance           instance = XR_NULL_HANDLE;
+	XrResult             result;
+	SDL_zero(info);
+	/* What SDL adds itself: its graphics binding (Vulkan here) and, on
+	 * Android, the create-instance extension. */
+	names[n++] = "XR_KHR_vulkan_enable2";
+#if defined(SDL_PLATFORM_ANDROID)
+	names[n++] = "XR_KHR_android_create_instance";
+	AeronXrAndroidCreateInfo android;
+	JNIEnv*                  env = (JNIEnv*)SDL_GetAndroidJNIEnv();
+	JavaVM*                  vm  = NULL;
+	jobject                  activity = (jobject)SDL_GetAndroidActivity();
+	if (env) {
+		(*env)->GetJavaVM(env, &vm);
+	}
+	SDL_zero(android);
+	android.type                = XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR;
+	android.applicationVM       = vm;
+	android.applicationActivity = activity;
+	info.next                   = &android;
+#endif
+	for (uint32_t i = 0; i < optional_count && n < SDL_arraysize(names); ++i) {
+		names[n++] = optional[i];
+	}
+	info.type                       = XR_TYPE_INSTANCE_CREATE_INFO;
+	info.applicationInfo.apiVersion = api;
+	SDL_strlcpy(info.applicationInfo.applicationName, "OpenXWA", XR_MAX_APPLICATION_NAME_SIZE);
+	info.applicationInfo.applicationVersion = 1;
+	SDL_strlcpy(info.applicationInfo.engineName, "Aeron", XR_MAX_ENGINE_NAME_SIZE);
+	info.applicationInfo.engineVersion = 1;
+	info.enabledExtensionCount         = n;
+	info.enabledExtensionNames         = names;
+	result                             = create(&info, &instance);
+	if (XR_SUCCEEDED(result) && instance != XR_NULL_HANDLE) {
+		PFN_xrDestroyInstance destroy = NULL;
+		if (XR_SUCCEEDED(gipa(instance, "xrDestroyInstance", (PFN_xrVoidFunction*)&destroy)) && destroy) {
+			destroy(instance);
+		}
+	}
+#if defined(SDL_PLATFORM_ANDROID)
+	if (env && activity) {
+		(*env)->DeleteLocalRef(env, activity);
+	}
+#endif
+	return result;
+}
+
+int Aeron_XrRecoverInstanceFailure(void) {
+	static int                 tried;
+	PFN_xrGetInstanceProcAddr  gipa;
+	PFN_xrCreateInstance       create = NULL;
+	const char*                opt[16];
+	const char*                keep[16];
+	uint32_t                   count = g_xr.extension_count;
+	uint32_t                   kept  = 0;
+	XrResult                   r;
+	const XrVersion            v10 = XR_MAKE_VERSION(1, 0, 0);
+	const XrVersion            v11 = XR_MAKE_VERSION(1, 1, 0);
+	XrVersion                  api = v10;
+
+	if (tried) {
+		return 0;
+	}
+	tried = 1;
+	gipa  = (PFN_xrGetInstanceProcAddr)SDL_OpenXR_GetXrGetInstanceProcAddr();
+	if (!gipa || XR_FAILED(gipa(XR_NULL_HANDLE, "xrCreateInstance", (PFN_xrVoidFunction*)&create)) || !create) {
+		Aeron_LogWarn("aeron.xr", "instance check: no xrCreateInstance");
+		return 0;
+	}
+	for (uint32_t i = 0; i < count; ++i) {
+		opt[i] = g_xr.extensions[i];
+	}
+	r = Aeron_XrTryInstance(gipa, create, v10, opt, count);
+	Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.0 with the %u optional extensions: %s", count,
+				  Aeron_XrResultName(r));
+	if (XR_SUCCEEDED(r)) {
+		return 0; /* The instance is fine; SDL failed after it. */
+	}
+	r = Aeron_XrTryInstance(gipa, create, v10, NULL, 0);
+	Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.0 without them: %s", Aeron_XrResultName(r));
+	if (XR_FAILED(r)) {
+		r = Aeron_XrTryInstance(gipa, create, v11, NULL, 0);
+		Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.1 without them: %s", Aeron_XrResultName(r));
+		if (XR_FAILED(r)) {
+			return 0;
+		}
+		api = v11;
+	}
+	for (uint32_t i = 0; i < count; ++i) {
+		if (strcmp(opt[i], XR_EXT_UUID_EXTENSION_NAME) == 0) {
+			continue; /* goes with XR_EXT_render_model */
+		}
+		if (strcmp(opt[i], XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME) == 0) {
+			/* Needs XR_EXT_render_model (and that XR_EXT_uuid). */
+			const char* deps[3] = { XR_EXT_RENDER_MODEL_EXTENSION_NAME, XR_EXT_UUID_EXTENSION_NAME, opt[i] };
+			r = Aeron_XrTryInstance(gipa, create, api, deps, 3);
+			if (XR_FAILED(r)) {
+				const char* no_uuid[2] = { XR_EXT_RENDER_MODEL_EXTENSION_NAME, opt[i] };
+				r = Aeron_XrTryInstance(gipa, create, api, no_uuid, 2);
+			} else {
+				g_xr_add_uuid = 1;
+			}
+			Aeron_LogWarn("aeron.xr", "instance check: %s (with XR_EXT_render_model): %s", opt[i],
+						  Aeron_XrResultName(r));
+			if (XR_SUCCEEDED(r)) {
+				keep[kept++] = opt[i];
+			} else if (g_xr_dropped_count < (int)SDL_arraysize(g_xr_dropped)) {
+				SDL_strlcpy(g_xr_dropped[g_xr_dropped_count++], opt[i], XR_MAX_EXTENSION_NAME_SIZE);
+			}
+			continue;
+		}
+		r = Aeron_XrTryInstance(gipa, create, api, &opt[i], 1);
+		if (XR_FAILED(r) && strcmp(opt[i], XR_EXT_RENDER_MODEL_EXTENSION_NAME) == 0) {
+			const char* pair[2] = { opt[i], "XR_EXT_uuid" };
+			const XrResult with_uuid = Aeron_XrTryInstance(gipa, create, api, pair, 2);
+			Aeron_LogWarn("aeron.xr", "instance check: %s with XR_EXT_uuid: %s", opt[i],
+						  Aeron_XrResultName(with_uuid));
+			if (XR_SUCCEEDED(with_uuid)) {
+				g_xr_add_uuid = 1;
+				r             = with_uuid;
+			}
+		}
+		Aeron_LogWarn("aeron.xr", "instance check: %s: %s", opt[i], Aeron_XrResultName(r));
+		if (XR_SUCCEEDED(r)) {
+			keep[kept++] = opt[i];
+		} else if (g_xr_dropped_count < (int)SDL_arraysize(g_xr_dropped)) {
+			SDL_strlcpy(g_xr_dropped[g_xr_dropped_count++], opt[i], XR_MAX_EXTENSION_NAME_SIZE);
+		}
+	}
+	{
+		const char* both[18];
+		uint32_t    n = 0;
+		for (uint32_t i = 0; i < kept; ++i) {
+			both[n++] = keep[i];
+		}
+		if (g_xr_add_uuid) {
+			both[n++] = "XR_EXT_uuid";
+		}
+		r = Aeron_XrTryInstance(gipa, create, api, both, n);
+	}
+	Aeron_LogWarn("aeron.xr", "instance check: OpenXR 1.%d with the %u accepted extensions: %s",
+				  api == v11 ? 1 : 0, kept, Aeron_XrResultName(r));
+	if (XR_FAILED(r)) {
+		/* Each works alone but not together: go without any. */
+		for (uint32_t i = 0; i < kept && g_xr_dropped_count < (int)SDL_arraysize(g_xr_dropped); ++i) {
+			SDL_strlcpy(g_xr_dropped[g_xr_dropped_count++], keep[i], XR_MAX_EXTENSION_NAME_SIZE);
+		}
+		g_xr_add_uuid = 0;
+	}
+	g_xr_api_version = api == v11 ? v11 : 0;
+	return 1;
 }
 
 static int Aeron_XrLoadFunctions(void) {
@@ -514,6 +745,18 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 					  XR_VERSION_MAJOR(instance_properties.runtimeVersion),
 					  XR_VERSION_MINOR(instance_properties.runtimeVersion),
 					  XR_VERSION_PATCH(instance_properties.runtimeVersion));
+#if defined(SDL_PLATFORM_ANDROID)
+		g_xr.quads_over_projection = strstr(instance_properties.runtimeName, "SteamVR") != NULL;
+#endif
+	}
+	{
+		const char* v = SDL_getenv("AERON_XR_EYE_OVERLAY");
+		if (v && v[0]) {
+			g_xr.quads_over_projection = v[0] == '0';
+		}
+		if (g_xr.quads_over_projection) {
+			Aeron_LogInfo("aeron.xr", "panels are composited over the 3D view here: no hand overlay layer");
+		}
 	}
 	g_xr.max_layers = XR_MIN_COMPOSITION_LAYERS_SUPPORTED;
 	if (XR_SUCCEEDED(g_xr.xrGetSystemProperties(g_xr.instance, g_xr.system_id, &system_properties))) {
@@ -557,6 +800,9 @@ int Aeron_XrInit(SDL_GPUDevice* device, int screen_width, int screen_height,
 		return 0;
 	}
 	g_xr.local_pose.orientation.w = 1.0f;
+	if (XR_FAILED(g_xr.xrCreateReferenceSpace(g_xr.session, &space_info, &g_xr.base_space))) {
+		g_xr.base_space = XR_NULL_HANDLE;
+	}
 	{
 		XrReferenceSpaceCreateInfo view_info = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO, NULL };
 		view_info.referenceSpaceType         = XR_REFERENCE_SPACE_TYPE_VIEW;
@@ -668,6 +914,10 @@ void Aeron_XrShutdown(void) {
 	if (g_xr.local_space && g_xr.xrDestroySpace) {
 		g_xr.xrDestroySpace(g_xr.local_space);
 	}
+	if (g_xr.base_space && g_xr.xrDestroySpace) {
+		g_xr.xrDestroySpace(g_xr.base_space);
+		g_xr.base_space = XR_NULL_HANDLE;
+	}
 	/* xrDestroySession is valid in any session state; xrEndSession is only
 	 * valid after the runtime moved the session to STOPPING. */
 	if (g_xr.session && g_xr.xrDestroySession) {
@@ -723,7 +973,7 @@ int Aeron_XrPollEvents(void) {
 				XrPosef identity;
 				SDL_zero(identity);
 				identity.orientation.w = 1.0f;
-				Aeron_XrSetLocalPose(&identity);
+				Aeron_XrSetLocalPose(&identity, g_xr.predicted_display_time);
 				g_xr.recenter_pending = 0;
 				Aeron_LogInfo("aeron.xr", "system recentre: view offset cleared");
 			}
@@ -749,13 +999,94 @@ int Aeron_XrFrameBegun(void) { return g_xr.frame_begun; }
 
 int Aeron_XrShouldRender(void) { return g_xr.frame_begun && g_xr.should_render; }
 
-/* Replace local_space by LOCAL offset by `pose`. */
-static int Aeron_XrSetLocalPose(const XrPosef* pose) {
+static XrVector3f Aeron_XrRotate(XrQuaternionf q, XrVector3f v) {
+	const float tx = 2.0f * (q.y * v.z - q.z * v.y), ty = 2.0f * (q.z * v.x - q.x * v.z),
+				tz = 2.0f * (q.x * v.y - q.y * v.x);
+	XrVector3f r;
+	r.x = v.x + q.w * tx + (q.y * tz - q.z * ty);
+	r.y = v.y + q.w * ty + (q.z * tx - q.x * tz);
+	r.z = v.z + q.w * tz + (q.x * ty - q.y * tx);
+	return r;
+}
+
+/* a * b: b's pose expressed in the space a is in. */
+static XrPosef Aeron_XrPoseCompose(XrPosef a, XrPosef b) {
+	const XrQuaternionf p = a.orientation, q = b.orientation;
+	const XrVector3f    t = Aeron_XrRotate(p, b.position);
+	XrPosef             r;
+	r.position.x    = a.position.x + t.x;
+	r.position.y    = a.position.y + t.y;
+	r.position.z    = a.position.z + t.z;
+	r.orientation.w = p.w * q.w - p.x * q.x - p.y * q.y - p.z * q.z;
+	r.orientation.x = p.w * q.x + p.x * q.w + p.y * q.z - p.z * q.y;
+	r.orientation.y = p.w * q.y - p.x * q.z + p.y * q.w + p.z * q.x;
+	r.orientation.z = p.w * q.z + p.x * q.y - p.y * q.x + p.z * q.w;
+	return r;
+}
+
+static XrPosef Aeron_XrPoseInverse(XrPosef a) {
+	XrPosef    r;
+	XrVector3f t;
+	r.orientation.w = a.orientation.w;
+	r.orientation.x = -a.orientation.x;
+	r.orientation.y = -a.orientation.y;
+	r.orientation.z = -a.orientation.z;
+	t               = Aeron_XrRotate(r.orientation, a.position);
+	r.position.x    = -t.x;
+	r.position.y    = -t.y;
+	r.position.z    = -t.z;
+	return r;
+}
+
+static XrSpace Aeron_XrCreateLocal(const XrPosef* pose) {
 	XrReferenceSpaceCreateInfo info = { XR_TYPE_REFERENCE_SPACE_CREATE_INFO, NULL };
 	XrSpace                    space = XR_NULL_HANDLE;
 	info.referenceSpaceType          = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	info.poseInReferenceSpace        = *pose;
 	if (XR_FAILED(g_xr.xrCreateReferenceSpace(g_xr.session, &info, &space))) {
+		return XR_NULL_HANDLE;
+	}
+	return space;
+}
+
+/* Replace local_space by LOCAL offset by `pose`, LOCAL being where it was at
+ * the start. A runtime may put each new LOCAL space somewhere else (the
+ * Steam Frame at the head's current heading): where a fresh one lands is
+ * checked against the start's, and the offset is corrected for it. */
+static int Aeron_XrSetLocalPose(const XrPosef* pose, XrTime time) {
+	XrPosef identity;
+	XrPosef want = *pose;
+	XrSpace space;
+	SDL_zero(identity);
+	identity.orientation.w = 1.0f;
+	if (g_xr.base_space && time > 0) {
+		XrSpace fresh = Aeron_XrCreateLocal(&identity);
+		if (fresh) {
+			XrSpaceLocation where = { XR_TYPE_SPACE_LOCATION, NULL };
+			if (XR_SUCCEEDED(g_xr.xrLocateSpace(fresh, g_xr.base_space, time, &where)) &&
+				(where.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+				(where.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+				const XrPosef h = where.pose;
+				const float   moved = h.position.x * h.position.x + h.position.y * h.position.y +
+									h.position.z * h.position.z;
+				if (moved > 1.0e-4f || SDL_fabsf(h.orientation.w) < 0.99996f) {
+					static int logged;
+					if (!logged) {
+						logged = 1;
+						Aeron_LogInfo("aeron.xr",
+									  "a new LOCAL space lands %.2f %.2f %.2f m / %.0f deg from the first; corrected",
+									  (double)h.position.x, (double)h.position.y, (double)h.position.z,
+									  (double)(2.0f * SDL_acosf(SDL_min(1.0f, SDL_fabsf(h.orientation.w))) *
+											   57.29578f));
+					}
+					want = Aeron_XrPoseCompose(Aeron_XrPoseInverse(h), *pose);
+				}
+			}
+			g_xr.xrDestroySpace(fresh);
+		}
+	}
+	space = Aeron_XrCreateLocal(&want);
+	if (!space) {
 		return 0;
 	}
 	if (g_xr.local_space) {
@@ -808,7 +1139,7 @@ static int Aeron_XrRecenterNow(XrTime time) {
 	pose.orientation.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
 	pose.orientation.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
 	pose.orientation.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
-	if (!Aeron_XrSetLocalPose(&pose)) {
+	if (!Aeron_XrSetLocalPose(&pose, time)) {
 		return 0;
 	}
 	Aeron_LogInfo("aeron.xr", "view recentred (turned %.0f deg, moved %.2f %.2f %.2f m)",
