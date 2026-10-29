@@ -1630,7 +1630,19 @@ int Aeron_RenderBackendInit(void) {
 			g_aeron.xr_headless_width  = screen_w;
 			g_aeron.xr_headless_height = screen_h;
 		} else {
-			SDL_GetWindowSizeInPixels(g_aeron.window, &screen_w, &screen_h);
+			/* PC: the desktop window is only a mirror; its size at this
+			 * point (before fullscreen, a resize or a display's scaling
+			 * take effect) says nothing about the screen's. A fixed size
+			 * (AERON_XR_SCREEN_PIXELS, e.g. 1920x1440) keeps the menus as
+			 * on the standalone headsets; without it, the window's. */
+			const char* px = SDL_getenv("AERON_XR_SCREEN_PIXELS");
+			int w = 0, h = 0;
+			if (px && SDL_sscanf(px, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 200 && w <= 4096 && h <= 4096) {
+				screen_w = w;
+				screen_h = h;
+			} else {
+				SDL_GetWindowSizeInPixels(g_aeron.window, &screen_w, &screen_h);
+			}
 		}
 		if (!Aeron_XrInit(g_aeron.gpu_device, screen_w, screen_h, g_aeron.swapchain_format)) {
 			Aeron_LogWarn("aeron", "OpenXR session setup failed; continuing on the desktop window only");
@@ -2042,6 +2054,18 @@ int Aeron_Present(void) {
 					blit.destination.texture = mirror;
 					blit.destination.w       = mirror_w;
 					blit.destination.h       = mirror_h;
+					/* The screen keeps its aspect in the window (a PC's 4:3
+					 * screen in a 16:9 window: bars at the sides). */
+					if (screen_w > 0 && screen_h > 0 &&
+						(Uint64)mirror_w * (Uint64)screen_h != (Uint64)mirror_h * (Uint64)screen_w) {
+						if ((Uint64)mirror_w * (Uint64)screen_h > (Uint64)mirror_h * (Uint64)screen_w) {
+							blit.destination.w = (Uint32)(((Uint64)mirror_h * (Uint64)screen_w) / (Uint64)screen_h);
+							blit.destination.x = (mirror_w - blit.destination.w) / 2;
+						} else {
+							blit.destination.h = (Uint32)(((Uint64)mirror_w * (Uint64)screen_h) / (Uint64)screen_w);
+							blit.destination.y = (mirror_h - blit.destination.h) / 2;
+						}
+					}
 					blit.load_op             = SDL_GPU_LOADOP_CLEAR;
 					blit.filter              = SDL_GPU_FILTER_LINEAR;
 					SDL_BlitGPUTexture(command_buffer, &blit);

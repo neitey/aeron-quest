@@ -1,5 +1,6 @@
 /* RGBA8 -> ASTC 4x4 (see astc_transcode.h). */
 #include "astc_transcode.h"
+#include <SDL3/SDL_stdinc.h>
 
 #if defined(AERON_HAS_ASTCENC)
 
@@ -27,7 +28,7 @@ unsigned g_threads;
 int g_failed;
 
 float astc_quality() {
-	const char* q = getenv("AERON_ASTC_QUALITY");
+	const char* q = SDL_getenv("AERON_ASTC_QUALITY");
 	if (q && strcmp(q, "fast") == 0) {
 		return ASTCENC_PRE_FAST;
 	}
@@ -78,7 +79,7 @@ uint64_t astc_hash(const uint8_t* rgba, size_t n, int w, int h, int srgb) {
 }
 
 bool astc_cache_path(uint64_t key, char* path, size_t size) {
-	const char* dir = getenv("AERON_ASTC_CACHE_DIR");
+	const char* dir = SDL_getenv("AERON_ASTC_CACHE_DIR");
 	if (!dir || !dir[0]) {
 		return false;
 	}

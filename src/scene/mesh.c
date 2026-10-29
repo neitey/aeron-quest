@@ -4,6 +4,7 @@
  */
 
 #include "aeron/scene/mesh.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "aeron/log.h"
 #include "aeron/scene/image_cache.h"
@@ -335,7 +336,7 @@ AeronSceneMesh* AeronScene_MeshCreate(AeronCommandBuffer* cmd, const AeronFlight
 		snprintf(label, sizeof label, "%s.%s", name, channel_name(c));
 		/* AERON_TEXTURE_ASTC=1: ASTC 4x4 on GPUs without BCn (mobile). */
 		{
-			const char* astc = getenv("AERON_TEXTURE_ASTC");
+			const char* astc = SDL_getenv("AERON_TEXTURE_ASTC");
 			s->atlas[c] = astc && astc[0] == '1' ? Aeron_ImageUploadKtx2Compressed(cmd, channel_payloads[c], label)
 												 : Aeron_ImageUploadKtx2(cmd, channel_payloads[c], label);
 		}

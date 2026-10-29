@@ -21,6 +21,7 @@
  */
 
 #include "internal.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -328,7 +329,7 @@ int AeronScenePbr_Ensure(struct AeronScene3D* s) {
 	/* AERON_PBR_SHADER=lite: the cheaper mobile fragment shader (same
 	 * resources and interface; scene_pbr_mesh_lite_impl.hlsli). */
 	{
-		const char* variant = getenv("AERON_PBR_SHADER");
+		const char* variant = SDL_getenv("AERON_PBR_SHADER");
 		if (variant && strcmp(variant, "lite") == 0) {
 			s->pbr_fs      = pbr_shader("scene_pbr_mesh_lite.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
 			s->pbr_mask_fs = pbr_shader("scene_pbr_mesh_mask_lite.frag", AERON_SHADER_STAGE_FRAGMENT, 8, 3, 5);
