@@ -127,6 +127,10 @@ void Aeron_XrRequestRecenter(void);
  * width and height (the quad, its pixel aspect) and the height offset, in
  * metres. Returns 0 while there is no XR screen. */
 int Aeron_XrVirtualScreenGeometry(float* distance_m, float* width_m, float* height_m, float* height_offset_m);
+/* The virtual screen's pixel size (the 2D layers are composed for it); 0 x 0
+ * while there is no XR screen. On a PC it can differ from the desktop
+ * window's (AERON_XR_SCREEN_PIXELS), whose size may change at any time. */
+void Aeron_XrScreenSize(int* width, int* height);
 
 /* Returns 1 and fills `out` when this host frame can be rendered in stereo
  * (session focused/visible, frame begun, runtime wants content, views
