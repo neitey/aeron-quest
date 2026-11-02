@@ -17,6 +17,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__linux__) || defined(__ANDROID__)
+#include <unistd.h>
+#endif
 
 /* -1 = undecided (read AERON_XR), 0 = off, 1 = on. Once XR setup fails it
  * is switched off for the rest of the run so the desktop path is used. */
@@ -683,6 +686,45 @@ int Aeron_XrFocused(void) { return g_xr.session != XR_NULL_HANDLE && g_xr.state 
 
 int Aeron_XrSessionRunning(void) { return g_xr.session != XR_NULL_HANDLE && g_xr.session_running; }
 
+/* ", memory: app N MB, free N MB" from /proc (Linux, Android): with the
+ * frame rate, whether a slow session ran short of memory. Empty elsewhere. */
+static void Aeron_XrMemoryText(char* out, size_t size) {
+	out[0] = '\0';
+#if defined(__linux__) || defined(__ANDROID__)
+	{
+		long  resident = -1;
+		long  available = -1;
+		FILE* f         = fopen("/proc/self/statm", "r");
+		if (f) {
+			long total_pages = 0;
+			long resident_pages = 0;
+			if (fscanf(f, "%ld %ld", &total_pages, &resident_pages) == 2) {
+				resident = resident_pages * (sysconf(_SC_PAGESIZE) / 1024);
+			}
+			fclose(f);
+		}
+		f = fopen("/proc/meminfo", "r");
+		if (f) {
+			char line[128];
+			while (fgets(line, sizeof line, f)) {
+				if (strncmp(line, "MemAvailable:", 13) == 0) {
+					available = strtol(line + 13, NULL, 10);
+					break;
+				}
+			}
+			fclose(f);
+		}
+		if (resident >= 0 && available >= 0) {
+			snprintf(out, size, ", memory: app %ld MB, free %ld MB", resident / 1024, available / 1024);
+		} else if (resident >= 0) {
+			snprintf(out, size, ", memory: app %ld MB", resident / 1024);
+		}
+	}
+#else
+	(void)size;
+#endif
+}
+
 int Aeron_XrPollEvents(void) {
 	XrEventDataBuffer event = { XR_TYPE_EVENT_DATA_BUFFER, NULL };
 
@@ -735,6 +777,16 @@ int Aeron_XrPollEvents(void) {
 			Aeron_XrRenderModelsDirty();
 		} else if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_RENDER_MODELS_CHANGED_EXT) {
 			Aeron_XrRenderModelsDirty();
+		} else if (event.type == XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT) {
+			/* The headset's own warnings: compositing / rendering behind, or
+			 * hot (thermal), per CPU or GPU. The log of a slow session then
+			 * says whether the headset throttled. */
+			const XrEventDataPerfSettingsEXT* perf = (const XrEventDataPerfSettingsEXT*)&event;
+			static const char* const sub[] = { "?", "compositing", "rendering", "thermal" };
+			const int                s     = (int)perf->subDomain >= 1 && (int)perf->subDomain <= 3 ? (int)perf->subDomain : 0;
+			Aeron_LogWarn("aeron.xr", "headset performance warning: %s %s level %d -> %d (0 normal, 25 warning, 75 impaired)",
+						  perf->domain == XR_PERF_SETTINGS_DOMAIN_CPU_EXT ? "CPU" : "GPU", sub[s], (int)perf->fromLevel,
+						  (int)perf->toLevel);
 		}
 		event.type = XR_TYPE_EVENT_DATA_BUFFER;
 		event.next = NULL;
@@ -1248,11 +1300,13 @@ int Aeron_XrEndFrame(SDL_GPUFence* submitted_fence) {
 		if (now - g_xr.perf_window_start_ns >= 5000000000ull) {
 			const double secs = (double)(now - g_xr.perf_window_start_ns) / 1.0e9;
 			const double hz   = g_xr.predicted_display_period > 0 ? 1.0e9 / (double)g_xr.predicted_display_period : 0.0;
+			char memory[96];
+			Aeron_XrMemoryText(memory, sizeof memory);
 			Aeron_LogInfo("aeron.xr",
 						  "perf: %.1f fps (display %.0f Hz), frame work avg %.2f ms max %.2f ms, skipped slots %u, "
-						  "%u/%u frames stereo",
+						  "%u/%u frames stereo%s",
 						  (double)g_xr.perf_frames / secs, hz, g_xr.perf_cpu_ms_sum / (double)g_xr.perf_frames,
-						  g_xr.perf_cpu_ms_max, g_xr.perf_late, g_xr.perf_stereo_frames, g_xr.perf_frames);
+						  g_xr.perf_cpu_ms_max, g_xr.perf_late, g_xr.perf_stereo_frames, g_xr.perf_frames, memory);
 			g_xr.perf_window_start_ns = now;
 			g_xr.perf_frames          = 0;
 			g_xr.perf_stereo_frames   = 0;
